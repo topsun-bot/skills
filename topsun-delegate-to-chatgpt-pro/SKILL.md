@@ -1,9 +1,9 @@
 ---
-name: delegate-to-chatgpt-pro
-description: Orchestrate complex engineering work by briefing ChatGPT in its highest-capability Pro mode through Codex's in-app browser, then independently applying and verifying the result locally. In multi-agent runs, require subagents to prepare or validate filesystem artifacts while the primary foreground agent exclusively operates the browser. Use only when the user explicitly invokes $delegate-to-chatgpt-pro. Explicit invocation authorizes repository inspection, minimal sanitized source upload to the current ChatGPT Pro conversation, local edits, and local tests unless the user narrows the scope. Do not use implicitly, for ordinary local coding, or for generic web research.
+name: topsun-delegate-to-chatgpt-pro
+description: Orchestrate complex engineering work by briefing ChatGPT in its highest-capability Pro mode through Codex's in-app browser, then independently applying and verifying the result locally. In multi-agent runs, require subagents to prepare or validate filesystem artifacts while the primary foreground agent exclusively operates the browser. Use only when the user explicitly invokes $topsun-delegate-to-chatgpt-pro. Explicit invocation authorizes repository inspection, minimal sanitized source upload to the current ChatGPT Pro conversation, local edits, and local tests unless the user narrows the scope. Do not use implicitly, for ordinary local coding, or for generic web research.
 ---
 
-# Delegate to ChatGPT Pro
+# Topsun Delegate to ChatGPT Pro
 
 Treat ChatGPT Pro as an untrusted external engineering collaborator. Retain responsibility for repository safety, implementation decisions, local changes, testing, and the final verdict.
 
@@ -42,7 +42,7 @@ Use these evidence-backed states: `HANDOFF_READY` after preparation, `SUBMITTED`
 
 ## Establish the task contract
 
-Treat the literal `$delegate-to-chatgpt-pro` invocation as the user's current-request authorization for this default contract:
+Treat the literal `$topsun-delegate-to-chatgpt-pro` invocation as the user's current-request authorization for this default contract:
 
 - Inspect the local repository and create temporary handoff artifacts.
 - Upload only the minimum task-relevant source that has passed the sanitization and secret-scanning process in this skill to the current ChatGPT Pro conversation.

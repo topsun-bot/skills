@@ -1,7 +1,0 @@
-interface:
-  display_name: "Delegate to ChatGPT Pro"
-  short_description: "Split browser delegation with independent verification"
-  default_prompt: "Use $delegate-to-chatgpt-pro with subagents preparing filesystem handoffs, the primary agent operating ChatGPT Pro in the in-app browser, and independent local verification."
-
-policy:
-  allow_implicit_invocation: false

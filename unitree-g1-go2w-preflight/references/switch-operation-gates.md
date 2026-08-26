@@ -53,8 +53,8 @@ Freeze locomotion/upper-body authority, waist ownership, arm weight/mixing seman
 In addition to the normal preflight evidence table, include:
 
 - exact device and allowed-state-transition identity;
-- current evidence level: digital feasibility, de-energized fixture, controlled isolated site, continuous trial, or production acceptance only when an explicit authorized acceptance artifact is identified;
-- for a production-acceptance claim, the acceptance artifact identifier, authorized signatory or role, scope, and validity window; otherwise state `production acceptance not established`;
+- current evidence level: digital feasibility, de-energized fixture, controlled isolated site, continuous trial, or production acceptance only when an explicit authorized acceptance artifact is identified and its scope and validity encompass the exact claim;
+- for a production-acceptance claim, the acceptance artifact identifier, authorized signatory or role, and evidence that its scope and validity encompass the exact site, device, allowed transition, robot/tool/software configuration, and time of the claim; otherwise state `production acceptance not established`;
 - whether any motion/contact was sent (`no` by default);
 - claims that remain prohibited;
 - the smallest safe next check and who must authorize it.

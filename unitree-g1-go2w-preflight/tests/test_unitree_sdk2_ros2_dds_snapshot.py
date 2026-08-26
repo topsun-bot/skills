@@ -100,6 +100,58 @@ class SnapshotTests(unittest.TestCase):
             self.assertIn("unreadable", report["domains"]["errors"][0])
             self.assertIn("unreadable", report["cyclonedds_config"]["reason"])
 
+    def test_target_absolute_config_uses_proc_root_namespace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            target_config = proc / "root/etc/cyclonedds.xml"
+            target_config.parent.mkdir(parents=True)
+            target_config.write_text('<CycloneDDS><Domain Id="target"/></CycloneDDS>')
+            (proc / "maps").write_text("")
+            (proc / "environ").write_bytes(b"CYCLONEDDS_URI=/etc/cyclonedds.xml\0HOME=/home/robot\0")
+            report = self.module.build_report(
+                self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                {"HOME": "/home/collector"},
+            )
+            self.assertEqual(report["cyclonedds_config"]["domain_ids"], ["target"])
+            self.assertEqual(report["cyclonedds_config"]["source"], "/etc/cyclonedds.xml")
+            self.assertEqual(report["cyclonedds_config"]["filesystem_scope"], "target_process_namespace")
+            self.assertIn("target_process_namespace", self.module.markdown(report))
+
+    def test_target_relative_and_tilde_configs_use_proc_namespace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            cwd_config = proc / "cwd/cyclone.xml"
+            home_config = proc / "root/home/robot/cyclone.xml"
+            cwd_config.parent.mkdir(parents=True)
+            home_config.parent.mkdir(parents=True)
+            cwd_config.write_text('<CycloneDDS><Domain Id="cwd"/></CycloneDDS>')
+            home_config.write_text('<CycloneDDS><Domain Id="home"/></CycloneDDS>')
+            (proc / "maps").write_text("")
+            for uri, expected in (("cyclone.xml", "cwd"), ("~/cyclone.xml", "home")):
+                with self.subTest(uri=uri):
+                    (proc / "environ").write_bytes(f"CYCLONEDDS_URI={uri}\0HOME=/home/robot\0".encode())
+                    report = self.module.build_report(
+                        self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                        {"HOME": "/home/collector"},
+                    )
+                    self.assertEqual(report["cyclonedds_config"]["domain_ids"], [expected])
+
+    def test_unreadable_target_config_is_not_contradicted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            proc.mkdir(parents=True)
+            (proc / "maps").write_text("")
+            (proc / "environ").write_bytes(b"CYCLONEDDS_URI=/missing.xml\0HOME=/home/robot\0")
+            report = self.module.build_report(
+                self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                {"HOME": "/home/collector"},
+            )
+            self.assertEqual(report["cyclonedds_config"]["status"], "not_proved")
+            self.assertIn("proc root/cwd", report["cyclonedds_config"]["reason"])
+
     def test_installed_candidates_are_not_loaded_binary_conflicts(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

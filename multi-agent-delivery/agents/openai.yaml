@@ -1,0 +1,6 @@
+interface:
+  display_name: "多智能体交付"
+  short_description: "计划先审、原作者修复、机器人证据闭环的多智能体交付"
+  default_prompt: "Use $multi-agent-delivery to plan, review, implement, and verify this task with specialized agents until its evidence-based acceptance gates pass."
+policy:
+  allow_implicit_invocation: true

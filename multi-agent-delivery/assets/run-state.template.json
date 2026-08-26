@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "skill": "multi-agent-delivery",
+  "objective": "",
+  "domain": "general",
+  "requirements_path": "",
+  "created_at": "",
+  "updated_at": "",
+  "phase": "discovery",
+  "status": "active",
+  "plan": {
+    "version": 0,
+    "status": "not_started",
+    "round": 0,
+    "max_rounds": 3,
+    "author_target": null,
+    "reviewer_target": null,
+    "review_verdict": null,
+    "blocking_findings": []
+  },
+  "implementation": {
+    "started": false,
+    "max_repair_rounds": 3,
+    "work_items": []
+  },
+  "verification": {
+    "selected_roles": [],
+    "reports": []
+  },
+  "requirements": [],
+  "issues": [],
+  "final_acceptance": {
+    "status": "not_started",
+    "reviewer_target": null,
+    "report_path": null
+  },
+  "convergence": {
+    "max_agent_attempts_per_phase": 2,
+    "phase_attempts": {
+      "discovery": 0,
+      "planning": 0,
+      "plan_review": 0,
+      "implementation": 0,
+      "verification": 0,
+      "final_acceptance": 0
+    },
+    "last_progress_at": "",
+    "last_artifact_hash": null,
+    "plan_review_history": [],
+    "repair_review_history": []
+  },
+  "audit_log": []
+}

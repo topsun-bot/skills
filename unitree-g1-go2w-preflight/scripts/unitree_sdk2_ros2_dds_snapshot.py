@@ -429,6 +429,7 @@ def process_snapshot(pid: int | None, proc_root: Path, home: str) -> dict[str, A
         pass
 
     loaded: list[dict[str, Any]] = []
+    map_failures: list[dict[str, str]] = []
     seen: set[str] = set()
     try:
         for line in (base / "maps").read_text(encoding="utf-8", errors="replace").splitlines():
@@ -452,6 +453,7 @@ def process_snapshot(pid: int | None, proc_root: Path, home: str) -> dict[str, A
                             os.close(file_fd)
                         continue
                 if error:
+                    map_failures.append({"path": redact_path(path_text, target_home), "reason": error})
                     loaded.append({
                         "kind": library_kind(Path(path_text).name), "path": redact_path(path_text, target_home),
                         "size_bytes": None, "sha256": None, "source": "process_maps",
@@ -460,8 +462,18 @@ def process_snapshot(pid: int | None, proc_root: Path, home: str) -> dict[str, A
     except OSError:
         pass
 
+    complete_libraries = [item for item in loaded if item.get("sha256")]
+    library_status = "proved" if loaded and len(complete_libraries) == len(loaded) and not map_failures else "not_proved"
+    if map_failures:
+        library_reason = "one or more relevant process map files could not be opened and hashed in the target namespace"
+    elif loaded and len(complete_libraries) != len(loaded):
+        library_reason = "one or more opened process libraries lacked a bounded SHA-256 observation"
+    elif loaded:
+        library_reason = None
+    else:
+        library_reason = "process exists but no DDS/Unitree library path was readable from maps"
     return {
-        "status": "proved" if loaded else "not_proved",
+        "status": library_status,
         "command_basename": command,
         "safe_environment": safe_env_snapshot(env, target_home),
         "_raw_environment": env,
@@ -470,7 +482,8 @@ def process_snapshot(pid: int | None, proc_root: Path, home: str) -> dict[str, A
         "_redaction_home": target_home,
         "_target_home": env.get("HOME"),
         "loaded_libraries": loaded,
-        "reason": None if loaded else "process exists but no DDS/Unitree library path was readable from maps",
+        "map_open_failures": map_failures,
+        "reason": library_reason,
     }
 
 

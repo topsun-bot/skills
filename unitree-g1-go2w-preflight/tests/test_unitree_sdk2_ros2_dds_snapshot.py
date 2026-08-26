@@ -69,6 +69,23 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(report["process"]["loaded_libraries"][0]["path"], "/a/libddsc.so")
             self.assertNotIn("nope", json.dumps(report))
 
+    def test_failed_map_open_keeps_process_evidence_not_proved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            (proc / "root").mkdir(parents=True)
+            (proc / "maps").write_text("0-1 r-xp 0 00:00 0 /libddsc.so\n")
+            (proc / "environ").write_bytes(b"HOME=/home/robot\0")
+            with mock.patch.object(self.module, "open_target_fd", side_effect=PermissionError("denied")):
+                report = self.module.build_report(
+                    self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                    {"HOME": "/home/collector"},
+                )
+            self.assertEqual(report["process"]["status"], "not_proved")
+            self.assertEqual(report["process"]["loaded_libraries"][0]["sha256"], None)
+            self.assertEqual(len(report["process"]["map_open_failures"]), 1)
+            self.assertIn("could not be opened", report["process"]["reason"])
+
     def test_target_process_environment_does_not_inherit_collector_values(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

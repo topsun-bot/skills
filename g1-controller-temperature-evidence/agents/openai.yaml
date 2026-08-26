@@ -1,0 +1,4 @@
+interface:
+  display_name: "G1 Controller Temperature Evidence"
+  short_description: "离线分析 G1 高温 A/B 日志，只输出证据不冒充根因"
+  default_prompt: "Use $g1-controller-temperature-evidence to compare two GEAR-SONIC G1 CSV log runs without sending robot commands."

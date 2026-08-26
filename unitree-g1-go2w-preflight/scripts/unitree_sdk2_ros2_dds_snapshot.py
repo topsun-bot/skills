@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import importlib.metadata
 import json
 import os
@@ -17,7 +18,7 @@ import re
 import socket
 import sys
 import xml.etree.ElementTree as ET
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 from urllib.parse import unquote, urlparse
 
@@ -144,16 +145,21 @@ def process_snapshot(pid: int | None, proc_root: Path, home: str) -> dict[str, A
         raise InputError(f"process directory not found: {base}")
 
     env: dict[str, str] = {}
+    environment_status = "proved"
+    environment_reason = None
     try:
         raw = (base / "environ").read_bytes()
         for item in raw.split(b"\0"):
             if b"=" in item:
                 key, value = item.split(b"=", 1)
                 decoded_key = key.decode("utf-8", "replace")
-                if decoded_key in SAFE_ENV or decoded_key == "CYCLONEDDS_URI":
+                if decoded_key in SAFE_ENV or decoded_key in {"CYCLONEDDS_URI", "HOME"}:
                     env[decoded_key] = value.decode("utf-8", "replace")
     except OSError:
-        pass
+        environment_status = "not_proved"
+        environment_reason = "target process environment was not readable"
+
+    target_home = env.get("HOME", home)
 
     command = None
     try:
@@ -173,15 +179,19 @@ def process_snapshot(pid: int | None, proc_root: Path, home: str) -> dict[str, A
                 continue
             if path_text not in seen:
                 seen.add(path_text)
-                loaded.append(library_record(Path(path_text), home, "process_maps"))
+                loaded.append(library_record(Path(path_text), target_home, "process_maps"))
     except OSError:
         pass
 
     return {
         "status": "proved" if loaded else "not_proved",
         "command_basename": command,
-        "safe_environment": safe_env_snapshot(env, home),
+        "safe_environment": safe_env_snapshot(env, target_home),
         "_raw_environment": env,
+        "_environment_status": environment_status,
+        "_environment_reason": environment_reason,
+        "_redaction_home": target_home,
+        "_target_home": env.get("HOME"),
         "loaded_libraries": loaded,
         "reason": None if loaded else "process exists but no DDS/Unitree library path was readable from maps",
     }
@@ -247,6 +257,57 @@ def cyclonedds_config_snapshot(uri: str | None, home: str) -> dict[str, Any]:
     return result
 
 
+def target_cyclonedds_config_snapshot(
+    uri: str | None,
+    pid: int,
+    proc_root: Path,
+    target_home: str | None,
+    redaction_home: str,
+) -> dict[str, Any]:
+    if not uri:
+        return {"status": "not_proved", "reason": "CYCLONEDDS_URI not set or supplied"}
+    if uri.lstrip().startswith("<"):
+        return cyclonedds_config_snapshot(uri, redaction_home)
+
+    parsed = urlparse(uri)
+    if parsed.scheme not in ("", "file"):
+        return {"status": "not_proved", "source": parsed.scheme, "reason": "non-file URI was not fetched"}
+    if parsed.netloc not in ("", "localhost"):
+        return {"status": "not_proved", "reason": "non-local file URI was not read"}
+    raw_path = unquote(parsed.path) if parsed.scheme == "file" else uri
+    if not raw_path:
+        return {"status": "not_proved", "reason": "target configuration path is empty"}
+
+    proc_base = proc_root / str(pid)
+    if raw_path == "~" or raw_path.startswith("~/"):
+        if not target_home or not PurePosixPath(target_home).is_absolute():
+            return {"status": "not_proved", "reason": "target HOME unavailable for tilde configuration path"}
+        suffix = raw_path[2:] if raw_path.startswith("~/") else ""
+        logical = PurePosixPath(target_home) / suffix
+        access_path = proc_base / "root" / str(logical).lstrip("/")
+        source = redact_path(str(logical), target_home)
+    elif raw_path.startswith("~"):
+        return {"status": "not_proved", "reason": "named-user tilde paths are not resolved"}
+    else:
+        logical = PurePosixPath(raw_path)
+        if logical.is_absolute():
+            access_path = proc_base / "root" / str(logical).lstrip("/")
+            source = redact_path(str(logical), target_home or redaction_home)
+        else:
+            access_path = proc_base / "cwd" / str(logical)
+            source = f"target_cwd:{logical}"
+
+    if ".." in logical.parts:
+        return {"status": "not_proved", "source": source, "reason": "parent traversal in target configuration path was not resolved"}
+    try:
+        text = access_path.read_text(encoding="utf-8")
+    except OSError:
+        return {"status": "not_proved", "source": source, "reason": "target configuration file was not readable through proc root/cwd"}
+    result = parse_cyclonedds_xml(text)
+    result.update({"source": source, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "filesystem_scope": "target_process_namespace"})
+    return result
+
+
 def package_versions() -> dict[str, str | None]:
     result: dict[str, str | None] = {}
     for package in PACKAGES:
@@ -269,7 +330,8 @@ def duplicate_binary_findings(libraries: list[dict[str, Any]]) -> list[dict[str,
             "kind": kind,
             "distinct_hashes": len(hashes),
             "status": "contradicted" if len(hashes) > 1 else "proved",
-            "meaning": "multiple binary builds observed" if len(hashes) > 1 else "one binary build observed",
+            "scope": "target_process_loaded_libraries",
+            "meaning": "multiple binary builds loaded in the target process" if len(hashes) > 1 else "one binary build loaded in the target process",
         })
     return findings
 
@@ -278,28 +340,65 @@ def build_report(args: argparse.Namespace, env: dict[str, str]) -> dict[str, Any
     home = env.get("HOME", str(Path.home()))
     process = process_snapshot(args.process_pid, args.proc_root, home)
     process_env = process.pop("_raw_environment", {})
-    combined_env = dict(env)
-    combined_env.update(process_env)
+    process_env_status = process.pop("_environment_status", "not_applicable")
+    process_env_reason = process.pop("_environment_reason", None)
+    redaction_home = process.pop("_redaction_home", home)
+    target_home = process.pop("_target_home", None)
 
-    ros_raw = args.ros_domain if args.ros_domain is not None else combined_env.get("ROS_DOMAIN_ID")
-    ros_domain, ros_error = parse_domain(ros_raw if ros_raw is not None else 0, "ROS domain")
+    if args.process_pid is None:
+        evidence_env = dict(env)
+        environment_evidence = {
+            "scope": "collector_process",
+            "status": "proved",
+            "reason": "no target PID supplied; configuration-only snapshot uses the collector environment",
+        }
+    else:
+        evidence_env = dict(process_env)
+        environment_evidence = {
+            "scope": "target_process",
+            "status": process_env_status,
+            "reason": process_env_reason,
+        }
+
+    ros_error = None
+    if args.ros_domain is not None:
+        ros_raw = args.ros_domain
+    elif environment_evidence["status"] == "proved":
+        ros_raw = evidence_env.get("ROS_DOMAIN_ID", 0)
+    else:
+        ros_raw = None
+        ros_error = "target process environment unreadable and --ros-domain not supplied"
+    ros_domain, parsed_ros_error = parse_domain(ros_raw, "ROS domain")
+    ros_error = ros_error or parsed_ros_error
     unitree_domain, unitree_error = parse_domain(args.unitree_domain, "Unitree ChannelFactory domain")
     domain_relation = "not_proved"
     if ros_domain is not None and unitree_domain is not None:
         domain_relation = "same" if ros_domain == unitree_domain else "different"
 
-    uri = args.cyclonedds_uri or combined_env.get("CYCLONEDDS_URI")
-    prefixes = candidate_prefixes(combined_env, args.search_prefix)
-    libraries = scan_libraries(prefixes, home)
-    seen_paths = {item["path"] for item in libraries}
-    for item in process["loaded_libraries"]:
-        if item["path"] not in seen_paths:
-            libraries.append(item)
-            seen_paths.add(item["path"])
+    if args.cyclonedds_uri is not None:
+        uri = args.cyclonedds_uri
+    elif environment_evidence["status"] == "proved":
+        uri = evidence_env.get("CYCLONEDDS_URI")
+    else:
+        uri = None
+    if uri is not None and args.process_pid is not None:
+        config = target_cyclonedds_config_snapshot(uri, args.process_pid, args.proc_root, target_home, redaction_home)
+    elif uri is not None:
+        config = cyclonedds_config_snapshot(uri, redaction_home)
+    elif environment_evidence["status"] != "proved":
+        config = {
+            "status": "not_proved",
+            "reason": "target process environment unreadable and --cyclonedds-uri not supplied",
+        }
+    else:
+        config = cyclonedds_config_snapshot(None, redaction_home)
+    prefixes = candidate_prefixes(evidence_env, args.search_prefix)
+    library_candidates = scan_libraries(prefixes, redaction_home)
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "collector": {
+            "version": "1.2.0",
             "network_packets_sent": "no",
             "dds_participant_created": "no",
             "robot_commands_sent": "no",
@@ -309,17 +408,19 @@ def build_report(args: argparse.Namespace, env: dict[str, str]) -> dict[str, Any
             "os": platform.system(), "release": platform.release(), "machine": platform.machine(),
             "python": platform.python_version(), "network_interfaces_names_only": [name for _, name in socket.if_nameindex()],
         },
-        "safe_environment": safe_env_snapshot(combined_env, home),
+        "environment_evidence": environment_evidence,
+        "safe_environment": safe_env_snapshot(evidence_env, redaction_home),
+        "python_packages_scope": "collector_process",
         "python_packages": package_versions(),
         "domains": {
             "ros_domain": ros_domain, "unitree_channel_factory_domain": unitree_domain,
             "relationship": domain_relation, "errors": [item for item in (ros_error, unitree_error) if item],
             "boundary": "different domains isolate discovery; same domain enables discovery but does not prove binary/config compatibility or RPC success",
         },
-        "cyclonedds_config": cyclonedds_config_snapshot(uri, home),
+        "cyclonedds_config": config,
         "process": process,
-        "library_candidates": libraries,
-        "binary_findings": duplicate_binary_findings(libraries),
+        "library_candidates": library_candidates,
+        "binary_findings": duplicate_binary_findings(process["loaded_libraries"]),
         "interpretation_gates": [
             {"gate": "configuration_loaded", "status": "not_proved", "evidence_needed": "current process log or trace"},
             {"gate": "participant_created", "status": "not_proved", "evidence_needed": "return/exception plus current process evidence"},
@@ -337,19 +438,83 @@ def build_report(args: argparse.Namespace, env: dict[str, str]) -> dict[str, Any
     }
 
 
+def markdown_cell(value: Any) -> str:
+    if value is None or value == "":
+        return "not_proved"
+    if isinstance(value, (list, dict)):
+        value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    text = str(value).replace("\r", " ").replace("\n", " ")
+    text = html.escape(text, quote=False).replace("\\", "\\\\")
+    for character in ("|", "*", "[", "]"):
+        text = text.replace(character, "\\" + character)
+    return text.replace("`", "'")
+
+
 def markdown(report: dict[str, Any]) -> str:
+    environment = report["environment_evidence"]
+    process = report["process"]
+    config = report["cyclonedds_config"]
     lines = [
         "# Unitree SDK2 + ROS 2 DDS read-only snapshot", "",
+        f"- Collector version: `{markdown_cell(report['collector'].get('version'))}`",
         f"- ROS domain: `{report['domains']['ros_domain']}`",
         f"- Unitree ChannelFactory domain: `{report['domains']['unitree_channel_factory_domain']}`",
         f"- Relationship: **{report['domains']['relationship']}**",
         "- Network packets sent: **no**", "- DDS participant created: **no**", "- Robot commands sent: **no**", "",
-        "## Binary findings", "", "| Kind | Distinct hashes | Status |", "|---|---:|---|",
+        "## Environment evidence", "",
+        f"- Scope: **{markdown_cell(environment.get('scope'))}**",
+        f"- Status: **{markdown_cell(environment.get('status'))}**",
+        f"- Reason: {markdown_cell(environment.get('reason'))}", "",
+        "| Variable | Value |", "|---|---|",
     ]
+    for key, value in sorted(report["safe_environment"].items()):
+        lines.append(f"| {markdown_cell(key)} | {markdown_cell(value)} |")
+    if not report["safe_environment"]:
+        lines.append("| none observed | not_proved |")
+
+    lines += ["", "## Target process", "",
+              f"- Library evidence status: **{markdown_cell(process.get('status'))}**",
+              f"- Command basename: `{markdown_cell(process.get('command_basename'))}`",
+              f"- Reason: {markdown_cell(process.get('reason'))}", "",
+              "### Loaded libraries", "",
+              "| Kind | Path | Size bytes | SHA-256 |", "|---|---|---:|---|"]
+    for item in process["loaded_libraries"]:
+        lines.append(f"| {markdown_cell(item.get('kind'))} | {markdown_cell(item.get('path'))} | {markdown_cell(item.get('size_bytes'))} | {markdown_cell(item.get('sha256'))} |")
+    if not process["loaded_libraries"]:
+        lines.append("| none observed | not_proved | not_proved | not_proved |")
+
+    lines += ["", "## Configured library candidates", "",
+              "Installed candidates are reported separately and are not treated as loaded-process conflicts.", "",
+              "| Kind | Path | Size bytes | SHA-256 |", "|---|---|---:|---|"]
+    for item in report["library_candidates"]:
+        lines.append(f"| {markdown_cell(item.get('kind'))} | {markdown_cell(item.get('path'))} | {markdown_cell(item.get('size_bytes'))} | {markdown_cell(item.get('sha256'))} |")
+    if not report["library_candidates"]:
+        lines.append("| none observed | not_proved | not_proved | not_proved |")
+
+    lines += ["", "## Python packages", "",
+              f"- Scope: **{markdown_cell(report.get('python_packages_scope'))}** (the collector runtime; not automatically the target process)", "",
+              "| Package | Version |", "|---|---|"]
+    for package, version in sorted(report["python_packages"].items()):
+        lines.append(f"| {markdown_cell(package)} | {markdown_cell(version)} |")
+
+    lines += ["", "## CycloneDDS configuration", "",
+              f"- Status: **{markdown_cell(config.get('status'))}**",
+              f"- Filesystem scope: **{markdown_cell(config.get('filesystem_scope'))}**",
+              f"- Source: `{markdown_cell(config.get('source'))}`",
+              f"- SHA-256: `{markdown_cell(config.get('sha256'))}`",
+              f"- Domain IDs: `{markdown_cell(config.get('domain_ids'))}`",
+              f"- Address values redacted: **{markdown_cell(config.get('address_values_redacted'))}**",
+              f"- Reason/error: {markdown_cell(config.get('reason') or config.get('error'))}", ""]
+    if config.get("interfaces"):
+        lines += ["| Interface attributes (addresses omitted) |", "|---|"]
+        for item in config["interfaces"]:
+            lines.append(f"| {markdown_cell(item)} |")
+
+    lines += ["", "## Loaded-binary findings", "", "| Kind | Distinct hashes | Status | Scope |", "|---|---:|---|---|"]
     for item in report["binary_findings"]:
-        lines.append(f"| {item['kind']} | {item['distinct_hashes']} | {item['status']} |")
+        lines.append(f"| {markdown_cell(item['kind'])} | {item['distinct_hashes']} | {item['status']} | {markdown_cell(item.get('scope'))} |")
     if not report["binary_findings"]:
-        lines.append("| none observed | 0 | not_proved |")
+        lines.append("| none observed | 0 | not_proved | target_process_loaded_libraries |")
     lines += ["", "## Interpretation gates", "", "| Gate | Status | Evidence needed |", "|---|---|---|"]
     lines.extend(f"| {item['gate']} | {item['status']} | {item['evidence_needed']} |" for item in report["interpretation_gates"])
     lines += ["", "## Limits", ""]

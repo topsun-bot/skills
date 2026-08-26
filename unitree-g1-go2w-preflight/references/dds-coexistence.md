@@ -24,10 +24,11 @@ python3 scripts/unitree_sdk2_ros2_dds_snapshot.py \
 
 The collector creates no DDS participant, sends no network packet, imports no ROS/Unitree package, and sends no robot command. It intentionally omits hostnames, IP/peer addresses, and non-whitelisted environment variables.
 
-Collector V1.2 preserves these evidence scopes:
+Collector V1.3 preserves these evidence scopes:
 
 - with `--process-pid`, target conclusions use only the target process environment plus explicit CLI overrides; an unreadable target `environ` stays `not_proved` instead of inheriting the collector shell;
-- target-owned absolute, relative, and `~` configuration paths are read through `/proc/<pid>/root`, `/proc/<pid>/cwd`, and the captured target HOME; if that namespace evidence is unavailable, the configuration stays `not_proved`;
+- target-owned absolute, relative, and `~` configuration paths and library prefixes are read through `/proc/<pid>/root`, `/proc/<pid>/cwd`, and the captured target HOME; if that namespace evidence is unavailable, the result stays `not_proved`;
+- paths reported by `/proc/<pid>/maps` are hashed through the target process root, so a container or chroot does not silently substitute a same-named collector-host file;
 - libraries found under configured prefixes are installation candidates and remain separate from `/proc/<pid>/maps` loaded libraries;
 - only distinct hashes actually loaded by the target process can produce a loaded-build conflict signal;
 - Markdown includes the safe environment, command basename, loaded paths and hashes, configured candidates, parsed/redacted CycloneDDS configuration, and package versions;

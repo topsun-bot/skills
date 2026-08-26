@@ -56,7 +56,7 @@ def validate(document: dict[str, Any]) -> tuple[list[str], list[str], str]:
         value = value_at(document, path)
         if value is None:
             errors.append(f"missing field: {path}")
-        elif value not in STATUS_VALUES:
+        elif not isinstance(value, str) or value not in STATUS_VALUES:
             errors.append(f"{path} must be one of {sorted(STATUS_VALUES)}")
 
     missing_identity = [path for path in IDENTITY_PATHS if not known_text(value_at(document, path))]

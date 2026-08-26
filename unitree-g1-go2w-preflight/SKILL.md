@@ -22,7 +22,8 @@ Build a reproducible evidence snapshot before proposing fixes or motion tests. S
 3. Read the relevant workspace configuration and logs. Run `scripts/validate_evidence.py` against a copy of `assets/preflight-evidence.template.json` when a durable snapshot helps.
 4. Use only the probes allowed by [references/safe-probes.md](references/safe-probes.md). Prefer current state topics and monotonic freshness over `ping` alone.
 5. Evaluate the gates in [references/evidence-gates.md](references/evidence-gates.md). Stop at the first unsupported gate and propose the smallest next observation.
-6. Report what is proved, contradicted, missing, and unsafe to infer. Give commands only for the current safe gate.
+6. For contact tasks on manual switches, breakers, buttons, rotary controls, panels, or similar critical-infrastructure equipment, also read [references/switch-operation-gates.md](references/switch-operation-gates.md). Treat it as an evidence and test-planning reference, never as an electrical operating procedure.
+7. Report what is proved, contradicted, missing, and unsafe to infer. Give commands only for the current safe gate.
 
 ## Decision rules
 

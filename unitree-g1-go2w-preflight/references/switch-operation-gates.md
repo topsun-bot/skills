@@ -36,6 +36,8 @@ Give every run an immutable `attempt_id`. Never overwrite failed, cancelled, int
 
 Show integer numerators and denominators for small samples. A retry success can raise `R_logical`; it must not rewrite the first attempt or disappear from attempt-level metrics.
 
+When a metric has no eligible denominator, report it as `not applicable (0/0)`; do not calculate, display, or imply a percentage. For example, before any attempts are executed, `R_attempt` and `R_takeover` are both `not applicable (0/0)`, not 0%.
+
 ## Platform-specific checks
 
 ### Go2W plus arm
@@ -51,7 +53,8 @@ Freeze locomotion/upper-body authority, waist ownership, arm weight/mixing seman
 In addition to the normal preflight evidence table, include:
 
 - exact device and allowed-state-transition identity;
-- current evidence level: digital feasibility, de-energized fixture, controlled isolated site, continuous trial, or production acceptance;
+- current evidence level: digital feasibility, de-energized fixture, controlled isolated site, continuous trial, or production acceptance only when an explicit authorized acceptance artifact is identified;
+- for a production-acceptance claim, the acceptance artifact identifier, authorized signatory or role, scope, and validity window; otherwise state `production acceptance not established`;
 - whether any motion/contact was sent (`no` by default);
 - claims that remain prohibited;
 - the smallest safe next check and who must authorize it.

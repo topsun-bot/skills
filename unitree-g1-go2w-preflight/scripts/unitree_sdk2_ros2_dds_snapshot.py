@@ -87,7 +87,13 @@ def library_kind(name: str) -> str:
     return "other_dds"
 
 
-def library_record(path: Path, home: str, source: str) -> dict[str, Any]:
+def library_record(
+    path: Path,
+    home: str,
+    source: str,
+    display_path: Path | PurePosixPath | None = None,
+    filesystem_scope: str = "collector_process_namespace",
+) -> dict[str, Any]:
     try:
         resolved = path.resolve(strict=False)
         size = resolved.stat().st_size if resolved.is_file() else None
@@ -95,10 +101,11 @@ def library_record(path: Path, home: str, source: str) -> dict[str, Any]:
         resolved, size = path, None
     return {
         "kind": library_kind(path.name),
-        "path": redact_path(str(resolved), home),
+        "path": redact_path(str(display_path if display_path is not None else resolved), home),
         "size_bytes": size,
         "sha256": sha256_file(resolved),
         "source": source,
+        "filesystem_scope": filesystem_scope,
     }
 
 
@@ -121,20 +128,80 @@ def candidate_prefixes(env: dict[str, str], explicit: Iterable[Path]) -> list[Pa
     return unique
 
 
-def scan_libraries(prefixes: Iterable[Path], home: str) -> list[dict[str, Any]]:
+def target_namespace_path(
+    raw_path: str,
+    pid: int,
+    proc_root: Path,
+    target_home: str | None,
+) -> tuple[Path | None, PurePosixPath | None, str | None]:
+    if not raw_path:
+        return None, None, "target path is empty"
+    if raw_path == "~" or raw_path.startswith("~/"):
+        if not target_home or not PurePosixPath(target_home).is_absolute():
+            return None, None, "target HOME unavailable for tilde path"
+        suffix = raw_path[2:] if raw_path.startswith("~/") else ""
+        logical = PurePosixPath(target_home) / suffix
+    elif raw_path.startswith("~"):
+        return None, None, "named-user tilde paths are not resolved"
+    else:
+        logical = PurePosixPath(raw_path)
+    if ".." in logical.parts:
+        return None, logical, "parent traversal in target path was not resolved"
+    proc_base = proc_root / str(pid)
+    if logical.is_absolute():
+        return proc_base / "root" / str(logical).lstrip("/"), logical, None
+    return proc_base / "cwd" / str(logical), logical, None
+
+
+def target_path_label(logical: PurePosixPath, target_home: str | None, redaction_home: str) -> str:
+    if logical.is_absolute():
+        return redact_path(str(logical), target_home or redaction_home)
+    return f"target_cwd:{logical}"
+
+
+def scan_libraries(
+    prefixes: Iterable[Path],
+    home: str,
+    process_pid: int | None = None,
+    proc_root: Path = Path("/proc"),
+    target_home: str | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     records: list[dict[str, Any]] = []
+    prefix_evidence: list[dict[str, Any]] = []
     seen: set[str] = set()
     for prefix in prefixes:
-        for directory in (prefix, prefix / "lib", prefix / "lib64"):
+        if process_pid is not None:
+            access_prefix, logical_prefix, error = target_namespace_path(str(prefix), process_pid, proc_root, target_home)
+            scope = "target_process_namespace"
+            if error or access_prefix is None or logical_prefix is None:
+                prefix_evidence.append({"path": str(prefix), "status": "not_proved", "filesystem_scope": scope, "reason": error})
+                continue
+            display_prefix = target_path_label(logical_prefix, target_home, home)
+        else:
+            access_prefix = prefix.expanduser()
+            logical_prefix = PurePosixPath(str(prefix))
+            display_prefix = redact_path(str(access_prefix), home)
+            scope = "collector_process_namespace"
+        readable_directory = False
+        for suffix in ("", "lib", "lib64"):
+            directory = access_prefix / suffix if suffix else access_prefix
             if not directory.is_dir():
                 continue
+            readable_directory = True
+            display_directory = PurePosixPath(display_prefix) / suffix if suffix else PurePosixPath(display_prefix)
             for pattern in LIB_PATTERNS:
                 for path in directory.glob(pattern):
                     key = str(path.resolve(strict=False))
                     if key not in seen:
                         seen.add(key)
-                        records.append(library_record(path, home, "configured_prefix"))
-    return records
+                        records.append(library_record(path, home, "configured_prefix", display_directory / path.name, scope))
+        prefix_evidence.append({
+            "path": display_prefix,
+            "status": "proved" if readable_directory else "not_proved",
+            "filesystem_scope": scope,
+            "reason": None if readable_directory else "configured prefix was not readable in the selected namespace",
+        })
+    return records, prefix_evidence
 
 
 def process_snapshot(pid: int | None, proc_root: Path, home: str) -> dict[str, Any]:
@@ -179,7 +246,15 @@ def process_snapshot(pid: int | None, proc_root: Path, home: str) -> dict[str, A
                 continue
             if path_text not in seen:
                 seen.add(path_text)
-                loaded.append(library_record(Path(path_text), target_home, "process_maps"))
+                access_path, logical_path, error = target_namespace_path(path_text, pid, proc_root, env.get("HOME"))
+                if access_path is not None and logical_path is not None:
+                    loaded.append(library_record(access_path, target_home, "process_maps", logical_path, "target_process_namespace"))
+                else:
+                    loaded.append({
+                        "kind": library_kind(Path(path_text).name), "path": redact_path(path_text, target_home),
+                        "size_bytes": None, "sha256": None, "source": "process_maps",
+                        "filesystem_scope": "target_process_namespace", "reason": error,
+                    })
     except OSError:
         pass
 
@@ -278,27 +353,10 @@ def target_cyclonedds_config_snapshot(
     if not raw_path:
         return {"status": "not_proved", "reason": "target configuration path is empty"}
 
-    proc_base = proc_root / str(pid)
-    if raw_path == "~" or raw_path.startswith("~/"):
-        if not target_home or not PurePosixPath(target_home).is_absolute():
-            return {"status": "not_proved", "reason": "target HOME unavailable for tilde configuration path"}
-        suffix = raw_path[2:] if raw_path.startswith("~/") else ""
-        logical = PurePosixPath(target_home) / suffix
-        access_path = proc_base / "root" / str(logical).lstrip("/")
-        source = redact_path(str(logical), target_home)
-    elif raw_path.startswith("~"):
-        return {"status": "not_proved", "reason": "named-user tilde paths are not resolved"}
-    else:
-        logical = PurePosixPath(raw_path)
-        if logical.is_absolute():
-            access_path = proc_base / "root" / str(logical).lstrip("/")
-            source = redact_path(str(logical), target_home or redaction_home)
-        else:
-            access_path = proc_base / "cwd" / str(logical)
-            source = f"target_cwd:{logical}"
-
-    if ".." in logical.parts:
-        return {"status": "not_proved", "source": source, "reason": "parent traversal in target configuration path was not resolved"}
+    access_path, logical, error = target_namespace_path(raw_path, pid, proc_root, target_home)
+    if error or access_path is None or logical is None:
+        return {"status": "not_proved", "reason": error}
+    source = target_path_label(logical, target_home, redaction_home)
     try:
         text = access_path.read_text(encoding="utf-8")
     except OSError:
@@ -393,12 +451,14 @@ def build_report(args: argparse.Namespace, env: dict[str, str]) -> dict[str, Any
     else:
         config = cyclonedds_config_snapshot(None, redaction_home)
     prefixes = candidate_prefixes(evidence_env, args.search_prefix)
-    library_candidates = scan_libraries(prefixes, redaction_home)
+    library_candidates, library_candidate_prefixes = scan_libraries(
+        prefixes, redaction_home, args.process_pid, args.proc_root, target_home,
+    )
 
     return {
         "schema_version": 2,
         "collector": {
-            "version": "1.2.0",
+            "version": "1.3.0",
             "network_packets_sent": "no",
             "dds_participant_created": "no",
             "robot_commands_sent": "no",
@@ -419,6 +479,7 @@ def build_report(args: argparse.Namespace, env: dict[str, str]) -> dict[str, Any
         },
         "cyclonedds_config": config,
         "process": process,
+        "library_candidate_prefixes": library_candidate_prefixes,
         "library_candidates": library_candidates,
         "binary_findings": duplicate_binary_findings(process["loaded_libraries"]),
         "interpretation_gates": [
@@ -485,6 +546,12 @@ def markdown(report: dict[str, Any]) -> str:
 
     lines += ["", "## Configured library candidates", "",
               "Installed candidates are reported separately and are not treated as loaded-process conflicts.", "",
+              "### Prefix evidence", "", "| Prefix | Status | Filesystem scope | Reason |", "|---|---|---|---|"]
+    for item in report.get("library_candidate_prefixes", []):
+        lines.append(f"| {markdown_cell(item.get('path'))} | {markdown_cell(item.get('status'))} | {markdown_cell(item.get('filesystem_scope'))} | {markdown_cell(item.get('reason'))} |")
+    if not report.get("library_candidate_prefixes"):
+        lines.append("| none configured | not_proved | not_proved | not_proved |")
+    lines += ["", "### Candidate libraries", "",
               "| Kind | Path | Size bytes | SHA-256 |", "|---|---|---:|---|"]
     for item in report["library_candidates"]:
         lines.append(f"| {markdown_cell(item.get('kind'))} | {markdown_cell(item.get('path'))} | {markdown_cell(item.get('size_bytes'))} | {markdown_cell(item.get('sha256'))} |")

@@ -105,6 +105,23 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(finding["status"], "not_proved")
             self.assertIn("incomplete", finding["meaning"])
 
+    def test_fifo_replacing_deleted_map_path_does_not_block(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            fifo = proc / "root/libddsc.so"
+            fifo.parent.mkdir(parents=True)
+            os.mkfifo(fifo)
+            (proc / "maps").write_text("0-1 r-xp 0 00:00 0 /libddsc.so (deleted)\n")
+            (proc / "environ").write_bytes(b"HOME=/home/robot\0")
+            report = self.module.build_report(
+                self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                {"HOME": "/home/collector"},
+            )
+            self.assertEqual(report["process"]["status"], "not_proved")
+            self.assertEqual(report["process"]["loaded_libraries"][0]["sha256"], None)
+            self.assertIn("not a regular file", report["process"]["map_open_failures"][0]["reason"])
+
     def test_target_process_environment_does_not_inherit_collector_values(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -314,6 +331,30 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(report["library_candidate_prefixes"][0]["status"], "proved")
             self.assertIn("\\xff", report["library_candidates"][0]["path"])
             self.assertIsNotNone(report["library_candidates"][0]["sha256"])
+            json.dumps(report, ensure_ascii=False).encode("utf-8")
+
+    def test_non_utf8_candidate_open_failure_is_serializable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            (proc / "root/opt/robot").mkdir(parents=True)
+            (proc / "maps").write_text("")
+            (proc / "environ").write_bytes(b"LD_LIBRARY_PATH=/opt/robot\0HOME=/home/robot\0")
+            real_open_target_fd = self.module.open_target_fd
+
+            def open_target(logical, pid, proc_root, *, directory=False, nonblocking=False):
+                if "\udcff" in str(logical):
+                    raise PermissionError("denied")
+                return real_open_target_fd(logical, pid, proc_root, directory=directory, nonblocking=nonblocking)
+
+            with mock.patch.object(self.module.os, "listdir", return_value=["libddsc\udcff.so"]), \
+                 mock.patch.object(self.module, "open_target_fd", side_effect=open_target):
+                report = self.module.build_report(
+                    self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                    {"HOME": "/home/collector"},
+                )
+            reason = report["library_candidate_prefixes"][0]["reason"]
+            self.assertIn("\\xff", reason)
             json.dumps(report, ensure_ascii=False).encode("utf-8")
 
     def test_unenumerable_collector_prefix_is_not_proved(self):

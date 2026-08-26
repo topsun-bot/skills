@@ -364,7 +364,9 @@ def scan_libraries(
                     try:
                         file_fd = open_target_fd(target_directory / name, process_pid, proc_root, nonblocking=True)
                     except OSError as exc:
-                        scan_errors.append(f"{display_directory / name}: {exc.strerror or type(exc).__name__}")
+                        scan_errors.append(
+                            f"{display_directory / display_fs_path(name)}: {exc.strerror or type(exc).__name__}"
+                        )
                         continue
                     try:
                         if not stat.S_ISREG(os.fstat(file_fd).st_mode):
@@ -453,15 +455,18 @@ def process_snapshot(pid: int | None, proc_root: Path, home: str) -> dict[str, A
                 logical_path, display_path, error = target_logical_path(path_text, pid, proc_root, env.get("HOME"))
                 if logical_path is not None and display_path is not None:
                     try:
-                        file_fd = open_target_fd(logical_path, pid, proc_root)
+                        file_fd = open_target_fd(logical_path, pid, proc_root, nonblocking=True)
                     except OSError as exc:
                         error = exc.strerror or type(exc).__name__
                     else:
                         try:
-                            loaded.append(library_record_fd(file_fd, display_path, "process_maps"))
+                            if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                                error = "mapped path was not a regular file"
+                            else:
+                                loaded.append(library_record_fd(file_fd, display_path, "process_maps"))
+                                continue
                         finally:
                             os.close(file_fd)
-                        continue
                 if error:
                     map_failures.append({"path": redact_path(path_text, target_home), "reason": error})
                     loaded.append({

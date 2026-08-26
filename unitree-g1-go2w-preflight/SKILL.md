@@ -1,6 +1,6 @@
 ---
 name: unitree-g1-go2w-preflight
-description: Perform evidence-bounded, read-only-first preflight and diagnosis for Unitree G1, Go2, or Go2W ROS 2/SDK integration before any real-robot motion. Use for network, state freshness, firmware/mode/authority, Nav2 interfaces, arm integration, and safe real-robot test planning; do not use it to silently send motion commands.
+description: Perform evidence-bounded, read-only-first preflight and diagnosis for Unitree G1, Go2, or Go2W ROS 2/SDK integration before any real-robot motion. Use for network, CycloneDDS/ROS 2 coexistence, state freshness, firmware/mode/authority, Nav2 interfaces, arm integration, and safe real-robot test planning; do not use it to silently send motion commands.
 ---
 
 # Unitree G1 / Go2W Preflight
@@ -20,7 +20,7 @@ Build a reproducible evidence snapshot before proposing fixes or motion tests. S
 1. Identify the requested outcome and whether it is explanation, diagnosis, test planning, or an explicitly authorized real-robot action.
 2. Freeze the exact robot identity: model, DoF/configuration, firmware, SDK/ROS commit, network interface, and application commit. Record unknowns instead of guessing.
 3. Read the relevant workspace configuration and logs. Run `scripts/validate_evidence.py` against a copy of `assets/preflight-evidence.template.json` when a durable snapshot helps.
-4. Use only the probes allowed by [references/safe-probes.md](references/safe-probes.md). Prefer current state topics and monotonic freshness over `ping` alone.
+4. Use only the probes allowed by [references/safe-probes.md](references/safe-probes.md). Prefer current state topics and monotonic freshness over `ping` alone. For `failed to create domain`, `Precondition Not Met`, silent discovery, or RPC failures around ROS 2 plus Unitree SDK2, read [references/dds-coexistence.md](references/dds-coexistence.md) and run `scripts/unitree_sdk2_ros2_dds_snapshot.py` before proposing a Domain or library change.
 5. Evaluate the gates in [references/evidence-gates.md](references/evidence-gates.md). Stop at the first unsupported gate and propose the smallest next observation.
 6. For contact tasks on manual switches, breakers, buttons, rotary controls, panels, or similar critical-infrastructure equipment, also read [references/switch-operation-gates.md](references/switch-operation-gates.md). Treat it as an evidence and test-planning reference, never as an electrical operating procedure.
 7. Report what is proved, contradicted, missing, and unsafe to infer. Give commands only for the current safe gate.
@@ -30,6 +30,10 @@ Build a reproducible evidence snapshot before proposing fixes or motion tests. S
 ### Connectivity
 
 Local interface presence and IP configuration do not prove robot reachability. Ping reachability does not prove CycloneDDS discovery. DDS discovery does not prove state freshness. State freshness does not prove command authority.
+
+### ROS 2 and Unitree SDK2 DDS coexistence
+
+Keep configuration load, participant creation, endpoint discovery, data freshness, RPC response, and physical result as separate gates. A changed Domain ID can remove one initialization conflict while isolating required endpoints; it is not a universal fix. Multiple loaded DDS library paths or hashes are risk signals, not root-cause proof.
 
 ### Firmware, mode, and control authority
 

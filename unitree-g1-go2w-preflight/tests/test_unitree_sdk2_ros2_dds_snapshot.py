@@ -55,16 +55,17 @@ class SnapshotTests(unittest.TestCase):
             root = Path(tmp)
             proc = root / "proc/123"
             proc.mkdir(parents=True)
-            lib_a, lib_b = root / "a/libddsc.so", root / "b/libddsc.so"
-            lib_a.parent.mkdir(); lib_b.parent.mkdir()
+            lib_a, lib_b = proc / "root/a/libddsc.so", proc / "root/b/libddsc.so"
+            lib_a.parent.mkdir(parents=True); lib_b.parent.mkdir(parents=True)
             lib_a.write_bytes(b"a"); lib_b.write_bytes(b"b")
-            (proc / "maps").write_text(f"0-1 r-xp 0 00:00 0 {lib_a}\n1-2 r-xp 0 00:00 0 {lib_b}\n")
+            (proc / "maps").write_text("0-1 r-xp 0 00:00 0 /a/libddsc.so\n1-2 r-xp 0 00:00 0 /b/libddsc.so\n")
             (proc / "environ").write_bytes(b"ROS_DOMAIN_ID=0\0SECRET=nope\0")
             (proc / "cmdline").write_bytes(b"/usr/bin/node\0--ros-args\0")
             report = self.module.build_report(self.args(process_pid=123, proc_root=root / "proc"), {"HOME": "/home/test"})
             finding = next(item for item in report["binary_findings"] if item["kind"] == "ddsc")
             self.assertEqual(finding["status"], "contradicted")
             self.assertEqual(finding["distinct_hashes"], 2)
+            self.assertEqual(report["process"]["loaded_libraries"][0]["path"], "/a/libddsc.so")
             self.assertNotIn("nope", json.dumps(report))
 
     def test_target_process_environment_does_not_inherit_collector_values(self):
@@ -162,6 +163,41 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(len(report["library_candidates"]), 2)
             self.assertEqual(report["binary_findings"], [])
 
+    def test_target_candidate_prefixes_use_target_namespace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            target_lib = proc / "root/opt/robot/lib/libddsc.so"
+            target_lib.parent.mkdir(parents=True)
+            target_lib.write_bytes(b"target-dds")
+            (proc / "maps").write_text("")
+            (proc / "environ").write_bytes(b"LD_LIBRARY_PATH=/opt/robot\0HOME=/home/robot\0")
+            report = self.module.build_report(
+                self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                {"HOME": "/home/collector"},
+            )
+            self.assertEqual(len(report["library_candidates"]), 1)
+            self.assertEqual(report["library_candidates"][0]["path"], "/opt/robot/lib/libddsc.so")
+            self.assertEqual(report["library_candidates"][0]["sha256"], self.module.sha256_file(target_lib))
+            self.assertEqual(report["library_candidate_prefixes"][0]["filesystem_scope"], "target_process_namespace")
+            self.assertEqual(report["binary_findings"], [])
+
+    def test_relative_target_candidate_prefix_uses_target_cwd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            target_lib = proc / "cwd/vendor/lib/libddsc.so"
+            target_lib.parent.mkdir(parents=True)
+            target_lib.write_bytes(b"relative-target-dds")
+            (proc / "maps").write_text("")
+            (proc / "environ").write_bytes(b"LD_LIBRARY_PATH=vendor\0HOME=/home/robot\0")
+            report = self.module.build_report(
+                self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                {"HOME": "/home/collector"},
+            )
+            self.assertEqual(report["library_candidates"][0]["path"], "target_cwd:vendor/lib/libddsc.so")
+            self.assertEqual(report["library_candidates"][0]["sha256"], self.module.sha256_file(target_lib))
+
     def test_domain_relationship_is_descriptive_only(self):
         report = self.module.build_report(self.args(unitree_domain=1, ros_domain=0), {"HOME": "/tmp"})
         self.assertEqual(report["domains"]["relationship"], "different")
@@ -191,9 +227,10 @@ class SnapshotTests(unittest.TestCase):
             root = Path(tmp)
             proc = root / "proc/123"
             proc.mkdir(parents=True)
-            library = root / "libddsc.so"
+            library = proc / "root/libddsc.so"
+            library.parent.mkdir(parents=True)
             library.write_bytes(b"dds-build")
-            (proc / "maps").write_text(f"0-1 r-xp 0 00:00 0 {library}\n")
+            (proc / "maps").write_text("0-1 r-xp 0 00:00 0 /libddsc.so\n")
             (proc / "environ").write_bytes(b"ROS_DISTRO=humble\0ROS_DOMAIN_ID=7\0")
             (proc / "cmdline").write_bytes(b"/usr/bin/robot-node\0")
             xml = '<CycloneDDS><Domain Id="7"><General><Interfaces><NetworkInterface name="eth0" address="10.0.0.2"/></Interfaces></General></Domain></CycloneDDS>'
@@ -205,7 +242,7 @@ class SnapshotTests(unittest.TestCase):
             self.assertIn("robot-node", text)
             self.assertIn("ROS_DISTRO", text)
             self.assertIn("humble", text)
-            self.assertIn(str(library), text)
+            self.assertIn("/libddsc.so", text)
             self.assertIn(self.module.sha256_file(library), text)
             self.assertIn(report["cyclonedds_config"]["sha256"], text)
             self.assertNotIn("10.0.0.2", text)

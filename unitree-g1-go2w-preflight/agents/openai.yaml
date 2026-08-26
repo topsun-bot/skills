@@ -1,0 +1,4 @@
+interface:
+  display_name: "Unitree G1 / Go2W Preflight"
+  short_description: "只读核验 G1、Go2 与 Go2W 上机前证据和安全门"
+  default_prompt: "Use $unitree-g1-go2w-preflight to inspect my Unitree integration safely before any real-robot motion."

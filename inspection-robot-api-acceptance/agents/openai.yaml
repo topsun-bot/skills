@@ -1,0 +1,4 @@
+interface:
+  display_name: "Inspection Robot API Acceptance"
+  short_description: "核验巡检机器人 API 对接、试运行与交付证据"
+  default_prompt: "Use $inspection-robot-api-acceptance to turn my inspection robot interface requirements into a safe, evidence-bounded acceptance contract."

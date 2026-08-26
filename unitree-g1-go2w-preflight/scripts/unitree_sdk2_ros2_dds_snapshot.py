@@ -593,7 +593,7 @@ def package_versions() -> dict[str, str | None]:
     return result
 
 
-def duplicate_binary_findings(libraries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def duplicate_binary_findings(libraries: list[dict[str, Any]], evidence_complete: bool = True) -> list[dict[str, Any]]:
     grouped: dict[str, set[str]] = {}
     for record in libraries:
         digest = record.get("sha256")
@@ -601,12 +601,22 @@ def duplicate_binary_findings(libraries: list[dict[str, Any]]) -> list[dict[str,
             grouped.setdefault(record["kind"], set()).add(digest)
     findings = []
     for kind, hashes in sorted(grouped.items()):
+        multiple = len(hashes) > 1
+        if multiple:
+            status = "contradicted"
+            meaning = "multiple binary builds loaded in the target process"
+        elif evidence_complete:
+            status = "proved"
+            meaning = "one binary build loaded in the target process"
+        else:
+            status = "not_proved"
+            meaning = "one build was hashed, but incomplete process-map evidence cannot prove it was the only build"
         findings.append({
             "kind": kind,
             "distinct_hashes": len(hashes),
-            "status": "contradicted" if len(hashes) > 1 else "proved",
+            "status": status,
             "scope": "target_process_loaded_libraries",
-            "meaning": "multiple binary builds loaded in the target process" if len(hashes) > 1 else "one binary build loaded in the target process",
+            "meaning": meaning,
         })
     return findings
 
@@ -698,7 +708,7 @@ def build_report(args: argparse.Namespace, env: dict[str, str]) -> dict[str, Any
         "process": process,
         "library_candidate_prefixes": library_candidate_prefixes,
         "library_candidates": library_candidates,
-        "binary_findings": duplicate_binary_findings(process["loaded_libraries"]),
+        "binary_findings": duplicate_binary_findings(process["loaded_libraries"], process.get("status") == "proved"),
         "interpretation_gates": [
             {"gate": "configuration_loaded", "status": "not_proved", "evidence_needed": "current process log or trace"},
             {"gate": "participant_created", "status": "not_proved", "evidence_needed": "return/exception plus current process evidence"},

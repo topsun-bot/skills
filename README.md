@@ -1,6 +1,10 @@
 # 自研 Skills
 
-这个仓库集中存放 Topsun 团队自己开发的 Codex Skills。每个 Skill 使用一个独立的顶层目录，入口文件为 `SKILL.md`。
+这个公开仓库集中维护可复用的 Codex Skills。当前与机器人相关的内容覆盖 Unitree G1 / Go2W 上机前只读预检，以及巡检机器人 HTTP / ROS 2 API 对接、试运行验收和安全证据；所有机器人运动或生产系统写入都必须单独授权。
+
+项目说明与公开服务入口：[机巡实验室｜宇树 G1 / Go2W 二次开发](https://jixun-robot-lab.guo1988yan.chatgpt.site/?src=github-skills-readme)
+
+> 边界说明：本仓库包含集成、预检和验收方法，不代表宇树官方产品或官方认证，也不把离线检查、仿真或文档证据表述为真机量产能力。
 
 ## Skill 列表
 

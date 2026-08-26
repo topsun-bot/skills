@@ -271,6 +271,51 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(report["library_candidate_prefixes"][0]["status"], "not_proved")
             self.assertIn("PermissionError", report["library_candidate_prefixes"][0]["reason"])
 
+    def test_fifo_candidate_does_not_block_and_is_not_proved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            fifo = proc / "root/opt/robot/lib/libddsc.so"
+            fifo.parent.mkdir(parents=True)
+            os.mkfifo(fifo)
+            (proc / "maps").write_text("")
+            (proc / "environ").write_bytes(b"LD_LIBRARY_PATH=/opt/robot\0HOME=/home/robot\0")
+            report = self.module.build_report(
+                self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                {"HOME": "/home/collector"},
+            )
+            self.assertEqual(report["library_candidates"], [])
+            self.assertEqual(report["library_candidate_prefixes"][0]["status"], "not_proved")
+            self.assertIn("not a regular file", report["library_candidate_prefixes"][0]["reason"])
+
+    def test_non_utf8_candidate_filename_is_escaped_and_hashed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            directory = proc / "root/opt/robot/lib"
+            directory.mkdir(parents=True)
+            backing_file = root / "backing-libddsc.so"
+            backing_file.write_bytes(b"non-utf8-name")
+            (proc / "maps").write_text("")
+            (proc / "environ").write_bytes(b"LD_LIBRARY_PATH=/opt/robot\0HOME=/home/robot\0")
+            real_open_target_fd = self.module.open_target_fd
+
+            def open_target(logical, pid, proc_root, *, directory=False, nonblocking=False):
+                if "\udcff" in str(logical):
+                    return os.open(backing_file, os.O_RDONLY)
+                return real_open_target_fd(logical, pid, proc_root, directory=directory, nonblocking=nonblocking)
+
+            with mock.patch.object(self.module.os, "listdir", return_value=["libddsc\udcff.so"]), \
+                 mock.patch.object(self.module, "open_target_fd", side_effect=open_target):
+                report = self.module.build_report(
+                    self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                    {"HOME": "/home/collector"},
+                )
+            self.assertEqual(report["library_candidate_prefixes"][0]["status"], "proved")
+            self.assertIn("\\xff", report["library_candidates"][0]["path"])
+            self.assertIsNotNone(report["library_candidates"][0]["sha256"])
+            json.dumps(report, ensure_ascii=False).encode("utf-8")
+
     def test_unenumerable_collector_prefix_is_not_proved(self):
         with tempfile.TemporaryDirectory() as tmp:
             prefix = Path(tmp)

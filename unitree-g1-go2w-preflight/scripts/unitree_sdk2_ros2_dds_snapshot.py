@@ -18,7 +18,7 @@ import re
 import socket
 import sys
 import xml.etree.ElementTree as ET
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 from urllib.parse import unquote, urlparse
 
@@ -191,6 +191,7 @@ def process_snapshot(pid: int | None, proc_root: Path, home: str) -> dict[str, A
         "_environment_status": environment_status,
         "_environment_reason": environment_reason,
         "_redaction_home": target_home,
+        "_target_home": env.get("HOME"),
         "loaded_libraries": loaded,
         "reason": None if loaded else "process exists but no DDS/Unitree library path was readable from maps",
     }
@@ -256,6 +257,57 @@ def cyclonedds_config_snapshot(uri: str | None, home: str) -> dict[str, Any]:
     return result
 
 
+def target_cyclonedds_config_snapshot(
+    uri: str | None,
+    pid: int,
+    proc_root: Path,
+    target_home: str | None,
+    redaction_home: str,
+) -> dict[str, Any]:
+    if not uri:
+        return {"status": "not_proved", "reason": "CYCLONEDDS_URI not set or supplied"}
+    if uri.lstrip().startswith("<"):
+        return cyclonedds_config_snapshot(uri, redaction_home)
+
+    parsed = urlparse(uri)
+    if parsed.scheme not in ("", "file"):
+        return {"status": "not_proved", "source": parsed.scheme, "reason": "non-file URI was not fetched"}
+    if parsed.netloc not in ("", "localhost"):
+        return {"status": "not_proved", "reason": "non-local file URI was not read"}
+    raw_path = unquote(parsed.path) if parsed.scheme == "file" else uri
+    if not raw_path:
+        return {"status": "not_proved", "reason": "target configuration path is empty"}
+
+    proc_base = proc_root / str(pid)
+    if raw_path == "~" or raw_path.startswith("~/"):
+        if not target_home or not PurePosixPath(target_home).is_absolute():
+            return {"status": "not_proved", "reason": "target HOME unavailable for tilde configuration path"}
+        suffix = raw_path[2:] if raw_path.startswith("~/") else ""
+        logical = PurePosixPath(target_home) / suffix
+        access_path = proc_base / "root" / str(logical).lstrip("/")
+        source = redact_path(str(logical), target_home)
+    elif raw_path.startswith("~"):
+        return {"status": "not_proved", "reason": "named-user tilde paths are not resolved"}
+    else:
+        logical = PurePosixPath(raw_path)
+        if logical.is_absolute():
+            access_path = proc_base / "root" / str(logical).lstrip("/")
+            source = redact_path(str(logical), target_home or redaction_home)
+        else:
+            access_path = proc_base / "cwd" / str(logical)
+            source = f"target_cwd:{logical}"
+
+    if ".." in logical.parts:
+        return {"status": "not_proved", "source": source, "reason": "parent traversal in target configuration path was not resolved"}
+    try:
+        text = access_path.read_text(encoding="utf-8")
+    except OSError:
+        return {"status": "not_proved", "source": source, "reason": "target configuration file was not readable through proc root/cwd"}
+    result = parse_cyclonedds_xml(text)
+    result.update({"source": source, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "filesystem_scope": "target_process_namespace"})
+    return result
+
+
 def package_versions() -> dict[str, str | None]:
     result: dict[str, str | None] = {}
     for package in PACKAGES:
@@ -291,6 +343,7 @@ def build_report(args: argparse.Namespace, env: dict[str, str]) -> dict[str, Any
     process_env_status = process.pop("_environment_status", "not_applicable")
     process_env_reason = process.pop("_environment_reason", None)
     redaction_home = process.pop("_redaction_home", home)
+    target_home = process.pop("_target_home", None)
 
     if args.process_pid is None:
         evidence_env = dict(env)
@@ -323,21 +376,29 @@ def build_report(args: argparse.Namespace, env: dict[str, str]) -> dict[str, Any
         domain_relation = "same" if ros_domain == unitree_domain else "different"
 
     if args.cyclonedds_uri is not None:
-        config = cyclonedds_config_snapshot(args.cyclonedds_uri, redaction_home)
+        uri = args.cyclonedds_uri
     elif environment_evidence["status"] == "proved":
-        config = cyclonedds_config_snapshot(evidence_env.get("CYCLONEDDS_URI"), redaction_home)
+        uri = evidence_env.get("CYCLONEDDS_URI")
     else:
+        uri = None
+    if uri is not None and args.process_pid is not None:
+        config = target_cyclonedds_config_snapshot(uri, args.process_pid, args.proc_root, target_home, redaction_home)
+    elif uri is not None:
+        config = cyclonedds_config_snapshot(uri, redaction_home)
+    elif environment_evidence["status"] != "proved":
         config = {
             "status": "not_proved",
             "reason": "target process environment unreadable and --cyclonedds-uri not supplied",
         }
+    else:
+        config = cyclonedds_config_snapshot(None, redaction_home)
     prefixes = candidate_prefixes(evidence_env, args.search_prefix)
     library_candidates = scan_libraries(prefixes, redaction_home)
 
     return {
         "schema_version": 2,
         "collector": {
-            "version": "1.1.0",
+            "version": "1.2.0",
             "network_packets_sent": "no",
             "dds_participant_created": "no",
             "robot_commands_sent": "no",
@@ -438,6 +499,7 @@ def markdown(report: dict[str, Any]) -> str:
 
     lines += ["", "## CycloneDDS configuration", "",
               f"- Status: **{markdown_cell(config.get('status'))}**",
+              f"- Filesystem scope: **{markdown_cell(config.get('filesystem_scope'))}**",
               f"- Source: `{markdown_cell(config.get('source'))}`",
               f"- SHA-256: `{markdown_cell(config.get('sha256'))}`",
               f"- Domain IDs: `{markdown_cell(config.get('domain_ids'))}`",

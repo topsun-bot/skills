@@ -86,6 +86,25 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(len(report["process"]["map_open_failures"]), 1)
             self.assertIn("could not be opened", report["process"]["reason"])
 
+    def test_partial_map_evidence_cannot_prove_one_binary_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            library = proc / "root/a/libddsc.so"
+            library.parent.mkdir(parents=True)
+            library.write_bytes(b"one-readable-build")
+            (proc / "maps").write_text("0-1 r-xp 0 00:00 0 /a/libddsc.so\n1-2 r-xp 0 00:00 0 /missing/libddsc.so\n")
+            (proc / "environ").write_bytes(b"HOME=/home/robot\0")
+            report = self.module.build_report(
+                self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                {"HOME": "/home/collector"},
+            )
+            finding = next(item for item in report["binary_findings"] if item["kind"] == "ddsc")
+            self.assertEqual(report["process"]["status"], "not_proved")
+            self.assertEqual(finding["distinct_hashes"], 1)
+            self.assertEqual(finding["status"], "not_proved")
+            self.assertIn("incomplete", finding["meaning"])
+
     def test_target_process_environment_does_not_inherit_collector_values(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

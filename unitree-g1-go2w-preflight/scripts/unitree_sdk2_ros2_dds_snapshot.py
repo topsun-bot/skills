@@ -8,6 +8,9 @@ DDS participant; open a network socket; or send a robot command.
 from __future__ import annotations
 
 import argparse
+import ctypes
+import errno
+import fnmatch
 import hashlib
 import html
 import importlib.metadata
@@ -16,6 +19,7 @@ import os
 import platform
 import re
 import socket
+import stat
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
@@ -32,10 +36,21 @@ PATH_ENV = {"CYCLONEDDS_HOME", "AMENT_PREFIX_PATH", "COLCON_PREFIX_PATH", "CMAKE
 PACKAGES = ("cyclonedds", "unitree-sdk2py", "rclpy")
 LIB_PATTERNS = ("libddsc*.so*", "librmw_cyclonedds_cpp*.so*", "libunitree_sdk2*.so*", "libunitree_sdk2*.a")
 MAX_HASH_BYTES = 256 * 1024 * 1024
+OPENAT2_SYSCALL = 437
+RESOLVE_NO_MAGICLINKS = 0x02
+RESOLVE_IN_ROOT = 0x10
 
 
 class InputError(ValueError):
     pass
+
+
+class TargetPathError(OSError):
+    pass
+
+
+class OpenHow(ctypes.Structure):
+    _fields_ = [("flags", ctypes.c_ulonglong), ("mode", ctypes.c_ulonglong), ("resolve", ctypes.c_ulonglong)]
 
 
 def redact_path(value: str, home: str) -> str:
@@ -67,6 +82,23 @@ def sha256_file(path: Path) -> str | None:
         with path.open("rb") as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def sha256_fd(fd: int) -> str | None:
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_HASH_BYTES:
+            return None
+        os.lseek(fd, 0, os.SEEK_SET)
+        digest = hashlib.sha256()
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
         return digest.hexdigest()
     except OSError:
         return None
@@ -109,6 +141,22 @@ def library_record(
     }
 
 
+def library_record_fd(fd: int, display_path: PurePosixPath, source: str) -> dict[str, Any]:
+    try:
+        metadata = os.fstat(fd)
+        size = metadata.st_size if stat.S_ISREG(metadata.st_mode) else None
+    except OSError:
+        size = None
+    return {
+        "kind": library_kind(display_path.name),
+        "path": str(display_path),
+        "size_bytes": size,
+        "sha256": sha256_fd(fd),
+        "source": source,
+        "filesystem_scope": "target_process_namespace",
+    }
+
+
 def candidate_prefixes(env: dict[str, str], explicit: Iterable[Path]) -> list[Path]:
     values = [Path(item) for item in explicit]
     for key in ("LD_LIBRARY_PATH", "AMENT_PREFIX_PATH", "COLCON_PREFIX_PATH", "CMAKE_PREFIX_PATH"):
@@ -128,35 +176,132 @@ def candidate_prefixes(env: dict[str, str], explicit: Iterable[Path]) -> list[Pa
     return unique
 
 
-def target_namespace_path(
+def _normalize_target_parts(parts: Iterable[str]) -> list[str]:
+    normalized: list[str] = []
+    for part in parts:
+        if part in ("", ".", "/"):
+            continue
+        if part == "..":
+            if not normalized:
+                raise TargetPathError("target path escapes process root")
+            normalized.pop()
+        else:
+            normalized.append(part)
+    return normalized
+
+
+def target_logical_path(
     raw_path: str,
     pid: int,
     proc_root: Path,
     target_home: str | None,
-) -> tuple[Path | None, PurePosixPath | None, str | None]:
+) -> tuple[PurePosixPath | None, PurePosixPath | None, str | None]:
     if not raw_path:
         return None, None, "target path is empty"
     if raw_path == "~" or raw_path.startswith("~/"):
         if not target_home or not PurePosixPath(target_home).is_absolute():
             return None, None, "target HOME unavailable for tilde path"
         suffix = raw_path[2:] if raw_path.startswith("~/") else ""
-        logical = PurePosixPath(target_home) / suffix
+        display = PurePosixPath(target_home) / suffix
     elif raw_path.startswith("~"):
         return None, None, "named-user tilde paths are not resolved"
     else:
-        logical = PurePosixPath(raw_path)
-    if ".." in logical.parts:
-        return None, logical, "parent traversal in target path was not resolved"
-    proc_base = proc_root / str(pid)
-    if logical.is_absolute():
-        return proc_base / "root" / str(logical).lstrip("/"), logical, None
-    return proc_base / "cwd" / str(logical), logical, None
+        display = PurePosixPath(raw_path)
+    if ".." in display.parts:
+        return None, display, "parent traversal in target path was not resolved"
+    if display.is_absolute():
+        return PurePosixPath("/") / str(display).lstrip("/"), display, None
+    try:
+        cwd_target = os.readlink(proc_root / str(pid) / "cwd")
+    except OSError:
+        return None, display, "target cwd was not readable"
+    if cwd_target.endswith(" (deleted)"):
+        return None, display, "target cwd was deleted"
+    cwd = PurePosixPath(cwd_target)
+    if not cwd.is_absolute():
+        return None, display, "target cwd was not absolute"
+    try:
+        parts = _normalize_target_parts((*cwd.parts, *display.parts))
+    except TargetPathError as exc:
+        return None, display, str(exc)
+    return PurePosixPath("/").joinpath(*parts), display, None
 
 
 def target_path_label(logical: PurePosixPath, target_home: str | None, redaction_home: str) -> str:
     if logical.is_absolute():
         return redact_path(str(logical), target_home or redaction_home)
     return f"target_cwd:{logical}"
+
+
+def _open_target_fallback(root_fd: int, logical: PurePosixPath, flags: int) -> int:
+    queue = _normalize_target_parts(logical.parts)
+    resolved: list[str] = []
+    symlinks = 0
+    current = os.dup(root_fd)
+    try:
+        if not queue:
+            return os.dup(root_fd)
+        while queue:
+            name = queue.pop(0)
+            try:
+                metadata = os.stat(name, dir_fd=current, follow_symlinks=False)
+            except OSError:
+                raise
+            if stat.S_ISLNK(metadata.st_mode):
+                symlinks += 1
+                if symlinks > 40:
+                    raise TargetPathError("too many symlinks in target path")
+                target = PurePosixPath(os.readlink(name, dir_fd=current))
+                combined = list(target.parts) + queue if target.is_absolute() else resolved + list(target.parts) + queue
+                queue = _normalize_target_parts(combined)
+                resolved = []
+                os.close(current)
+                current = os.dup(root_fd)
+                continue
+            open_flags = flags if not queue else os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            open_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+            opened = os.open(name, open_flags, dir_fd=current)
+            if queue:
+                os.close(current)
+                current = opened
+                resolved.append(name)
+            else:
+                return opened
+        raise TargetPathError("target path resolution produced no file")
+    finally:
+        os.close(current)
+
+
+def open_target_fd(
+    logical: PurePosixPath,
+    pid: int,
+    proc_root: Path,
+    *,
+    directory: bool = False,
+) -> int:
+    if not logical.is_absolute():
+        raise TargetPathError("target logical path was not absolute")
+    root_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    root_fd = os.open(proc_root / str(pid) / "root", root_flags)
+    requested_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    if directory:
+        requested_flags |= getattr(os, "O_DIRECTORY", 0)
+    try:
+        if platform.system() == "Linux":
+            libc = ctypes.CDLL(None, use_errno=True)
+            libc.syscall.restype = ctypes.c_long
+            how = OpenHow(requested_flags, 0, RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS)
+            path_bytes = str(logical).lstrip("/").encode() or b"."
+            fd = libc.syscall(OPENAT2_SYSCALL, root_fd, path_bytes, ctypes.byref(how), ctypes.sizeof(how))
+            if fd < 0:
+                error_number = ctypes.get_errno()
+                if error_number == errno.ENOSYS:
+                    raise TargetPathError("openat2 unavailable; target path not proved")
+                raise OSError(error_number, os.strerror(error_number), str(logical))
+            return int(fd)
+        return _open_target_fallback(root_fd, logical, requested_flags)
+    finally:
+        os.close(root_fd)
 
 
 def scan_libraries(
@@ -171,35 +316,83 @@ def scan_libraries(
     seen: set[str] = set()
     for prefix in prefixes:
         if process_pid is not None:
-            access_prefix, logical_prefix, error = target_namespace_path(str(prefix), process_pid, proc_root, target_home)
+            logical_prefix, display_logical, error = target_logical_path(str(prefix), process_pid, proc_root, target_home)
             scope = "target_process_namespace"
-            if error or access_prefix is None or logical_prefix is None:
+            if error or logical_prefix is None or display_logical is None:
                 prefix_evidence.append({"path": str(prefix), "status": "not_proved", "filesystem_scope": scope, "reason": error})
                 continue
-            display_prefix = target_path_label(logical_prefix, target_home, home)
+            display_prefix = target_path_label(display_logical, target_home, home)
         else:
             access_prefix = prefix.expanduser()
             logical_prefix = PurePosixPath(str(prefix))
             display_prefix = redact_path(str(access_prefix), home)
             scope = "collector_process_namespace"
-        readable_directory = False
+        enumerated_directory = False
+        scan_errors: list[str] = []
         for suffix in ("", "lib", "lib64"):
-            directory = access_prefix / suffix if suffix else access_prefix
-            if not directory.is_dir():
-                continue
-            readable_directory = True
             display_directory = PurePosixPath(display_prefix) / suffix if suffix else PurePosixPath(display_prefix)
-            for pattern in LIB_PATTERNS:
-                for path in directory.glob(pattern):
+            if process_pid is not None:
+                target_directory = logical_prefix / suffix if suffix else logical_prefix
+                try:
+                    directory_fd = open_target_fd(target_directory, process_pid, proc_root, directory=True)
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    scan_errors.append(f"{display_directory}: {exc.strerror or type(exc).__name__}")
+                    continue
+                try:
+                    names = os.listdir(directory_fd)
+                    enumerated_directory = True
+                except OSError as exc:
+                    scan_errors.append(f"{display_directory}: {exc.strerror or type(exc).__name__}")
+                    names = []
+                finally:
+                    os.close(directory_fd)
+                for name in names:
+                    if not any(fnmatch.fnmatch(name, pattern) for pattern in LIB_PATTERNS):
+                        continue
+                    key = str(target_directory / name)
+                    if key in seen:
+                        continue
+                    try:
+                        file_fd = open_target_fd(target_directory / name, process_pid, proc_root)
+                    except OSError as exc:
+                        scan_errors.append(f"{display_directory / name}: {exc.strerror or type(exc).__name__}")
+                        continue
+                    try:
+                        seen.add(key)
+                        records.append(library_record_fd(file_fd, display_directory / name, "configured_prefix"))
+                    finally:
+                        os.close(file_fd)
+            else:
+                directory = access_prefix / suffix if suffix else access_prefix
+                try:
+                    metadata = directory.stat()
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    scan_errors.append(f"{display_directory}: {exc.strerror or type(exc).__name__}")
+                    continue
+                if not stat.S_ISDIR(metadata.st_mode):
+                    continue
+                try:
+                    with os.scandir(directory) as entries:
+                        paths = [directory / entry.name for entry in entries if any(fnmatch.fnmatch(entry.name, pattern) for pattern in LIB_PATTERNS)]
+                except OSError as exc:
+                    scan_errors.append(f"{display_directory}: {exc.strerror or type(exc).__name__}")
+                    continue
+                enumerated_directory = True
+                for path in paths:
                     key = str(path.resolve(strict=False))
                     if key not in seen:
                         seen.add(key)
                         records.append(library_record(path, home, "configured_prefix", display_directory / path.name, scope))
+        proved = enumerated_directory and not scan_errors
         prefix_evidence.append({
             "path": display_prefix,
-            "status": "proved" if readable_directory else "not_proved",
+            "status": "proved" if proved else "not_proved",
             "filesystem_scope": scope,
-            "reason": None if readable_directory else "configured prefix was not readable in the selected namespace",
+            "reason": None if proved else "; ".join(scan_errors) or "configured prefix was not enumerable in the selected namespace",
         })
     return records, prefix_evidence
 
@@ -246,10 +439,19 @@ def process_snapshot(pid: int | None, proc_root: Path, home: str) -> dict[str, A
                 continue
             if path_text not in seen:
                 seen.add(path_text)
-                access_path, logical_path, error = target_namespace_path(path_text, pid, proc_root, env.get("HOME"))
-                if access_path is not None and logical_path is not None:
-                    loaded.append(library_record(access_path, target_home, "process_maps", logical_path, "target_process_namespace"))
-                else:
+                logical_path, display_path, error = target_logical_path(path_text, pid, proc_root, env.get("HOME"))
+                if logical_path is not None and display_path is not None:
+                    try:
+                        file_fd = open_target_fd(logical_path, pid, proc_root)
+                    except OSError as exc:
+                        error = exc.strerror or type(exc).__name__
+                    else:
+                        try:
+                            loaded.append(library_record_fd(file_fd, display_path, "process_maps"))
+                        finally:
+                            os.close(file_fd)
+                        continue
+                if error:
                     loaded.append({
                         "kind": library_kind(Path(path_text).name), "path": redact_path(path_text, target_home),
                         "size_bytes": None, "sha256": None, "source": "process_maps",
@@ -353,12 +555,14 @@ def target_cyclonedds_config_snapshot(
     if not raw_path:
         return {"status": "not_proved", "reason": "target configuration path is empty"}
 
-    access_path, logical, error = target_namespace_path(raw_path, pid, proc_root, target_home)
-    if error or access_path is None or logical is None:
+    logical, display_logical, error = target_logical_path(raw_path, pid, proc_root, target_home)
+    if error or logical is None or display_logical is None:
         return {"status": "not_proved", "reason": error}
-    source = target_path_label(logical, target_home, redaction_home)
+    source = target_path_label(display_logical, target_home, redaction_home)
     try:
-        text = access_path.read_text(encoding="utf-8")
+        file_fd = open_target_fd(logical, pid, proc_root)
+        with os.fdopen(file_fd, "r", encoding="utf-8") as handle:
+            text = handle.read()
     except OSError:
         return {"status": "not_proved", "source": source, "reason": "target configuration file was not readable through proc root/cwd"}
     result = parse_cyclonedds_xml(text)
@@ -458,7 +662,7 @@ def build_report(args: argparse.Namespace, env: dict[str, str]) -> dict[str, Any
     return {
         "schema_version": 2,
         "collector": {
-            "version": "1.3.0",
+            "version": "1.4.0",
             "network_packets_sent": "no",
             "dds_participant_created": "no",
             "robot_commands_sent": "no",

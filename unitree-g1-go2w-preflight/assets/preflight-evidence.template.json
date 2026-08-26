@@ -1,0 +1,52 @@
+{
+  "schema_version": "unitree-preflight-v1",
+  "robot": {
+    "model": "unknown",
+    "exact_configuration": "unknown",
+    "firmware": "unknown"
+  },
+  "software": {
+    "sdk_version_or_commit": "unknown",
+    "ros_distro": "unknown",
+    "rmw_implementation": "unknown",
+    "application_commit": "unknown"
+  },
+  "network": {
+    "interface": "unknown",
+    "local_address": "unknown",
+    "robot_address": "unknown",
+    "state_stream": "unknown",
+    "state_freshness": "unknown"
+  },
+  "authority": {
+    "mode_readback": "unknown",
+    "command_owner": "unknown",
+    "lease_or_authority": "unknown",
+    "competing_publishers": "unknown"
+  },
+  "safety": {
+    "specific_motion_authorized": "unknown",
+    "site_authorized": "unknown",
+    "area_clear": "unknown",
+    "observer_ready": "unknown",
+    "manual_takeover_ready": "unknown",
+    "independent_stop_ready": "unknown"
+  },
+  "navigation": {
+    "tf_contract": "unknown",
+    "odometry_fresh": "unknown",
+    "sensor_fresh": "unknown",
+    "timeout_zero_policy": "unknown"
+  },
+  "manipulation": {
+    "arm_state": "unknown",
+    "joint_ownership": "unknown",
+    "payload_and_tool": "unknown",
+    "navigation_interlock": "unknown"
+  },
+  "physical": {
+    "motion_observed": "unknown",
+    "stop_observed": "unknown"
+  },
+  "evidence": []
+}

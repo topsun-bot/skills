@@ -62,6 +62,10 @@ def redact_path(value: str, home: str) -> str:
     return value
 
 
+def display_fs_path(value: str | PurePosixPath) -> str:
+    return os.fsencode(str(value)).decode("utf-8", "backslashreplace")
+
+
 def safe_env_snapshot(env: dict[str, str], home: str) -> dict[str, str]:
     result: dict[str, str] = {}
     for key in SAFE_ENV:
@@ -149,7 +153,7 @@ def library_record_fd(fd: int, display_path: PurePosixPath, source: str) -> dict
         size = None
     return {
         "kind": library_kind(display_path.name),
-        "path": str(display_path),
+        "path": display_fs_path(display_path),
         "size_bytes": size,
         "sha256": sha256_fd(fd),
         "source": source,
@@ -229,8 +233,8 @@ def target_logical_path(
 
 def target_path_label(logical: PurePosixPath, target_home: str | None, redaction_home: str) -> str:
     if logical.is_absolute():
-        return redact_path(str(logical), target_home or redaction_home)
-    return f"target_cwd:{logical}"
+        return display_fs_path(redact_path(str(logical), target_home or redaction_home))
+    return "target_cwd:" + display_fs_path(logical)
 
 
 def _open_target_fallback(root_fd: int, logical: PurePosixPath, flags: int) -> int:
@@ -278,6 +282,7 @@ def open_target_fd(
     proc_root: Path,
     *,
     directory: bool = False,
+    nonblocking: bool = False,
 ) -> int:
     if not logical.is_absolute():
         raise TargetPathError("target logical path was not absolute")
@@ -286,12 +291,14 @@ def open_target_fd(
     requested_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
     if directory:
         requested_flags |= getattr(os, "O_DIRECTORY", 0)
+    if nonblocking:
+        requested_flags |= getattr(os, "O_NONBLOCK", 0)
     try:
         if platform.system() == "Linux":
             libc = ctypes.CDLL(None, use_errno=True)
             libc.syscall.restype = ctypes.c_long
             how = OpenHow(requested_flags, 0, RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS)
-            path_bytes = str(logical).lstrip("/").encode() or b"."
+            path_bytes = os.fsencode(str(logical).lstrip("/")) or b"."
             fd = libc.syscall(OPENAT2_SYSCALL, root_fd, path_bytes, ctypes.byref(how), ctypes.sizeof(how))
             if fd < 0:
                 error_number = ctypes.get_errno()
@@ -355,11 +362,14 @@ def scan_libraries(
                     if key in seen:
                         continue
                     try:
-                        file_fd = open_target_fd(target_directory / name, process_pid, proc_root)
+                        file_fd = open_target_fd(target_directory / name, process_pid, proc_root, nonblocking=True)
                     except OSError as exc:
                         scan_errors.append(f"{display_directory / name}: {exc.strerror or type(exc).__name__}")
                         continue
                     try:
+                        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                            scan_errors.append(f"{display_directory / display_fs_path(name)}: matching entry was not a regular file")
+                            continue
                         seen.add(key)
                         records.append(library_record_fd(file_fd, display_directory / name, "configured_prefix"))
                     finally:
@@ -573,7 +583,10 @@ def target_cyclonedds_config_snapshot(
         return {"status": "not_proved", "reason": error}
     source = target_path_label(display_logical, target_home, redaction_home)
     try:
-        file_fd = open_target_fd(logical, pid, proc_root)
+        file_fd = open_target_fd(logical, pid, proc_root, nonblocking=True)
+        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+            os.close(file_fd)
+            return {"status": "not_proved", "source": source, "reason": "target configuration path was not a regular file"}
         with os.fdopen(file_fd, "r", encoding="utf-8") as handle:
             text = handle.read()
     except OSError:

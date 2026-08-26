@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import importlib.metadata
 import json
 import os
@@ -381,7 +382,11 @@ def markdown_cell(value: Any) -> str:
         return "not_proved"
     if isinstance(value, (list, dict)):
         value = json.dumps(value, ensure_ascii=False, sort_keys=True)
-    return str(value).replace("\r", " ").replace("\n", " ").replace("|", "\\|").replace("`", "'")
+    text = str(value).replace("\r", " ").replace("\n", " ")
+    text = html.escape(text, quote=False).replace("\\", "\\\\")
+    for character in ("|", "*", "[", "]"):
+        text = text.replace(character, "\\" + character)
+    return text.replace("`", "'")
 
 
 def markdown(report: dict[str, Any]) -> str:

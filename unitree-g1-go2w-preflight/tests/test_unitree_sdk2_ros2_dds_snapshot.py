@@ -158,6 +158,17 @@ class SnapshotTests(unittest.TestCase):
             self.assertIn(report["cyclonedds_config"]["sha256"], text)
             self.assertNotIn("10.0.0.2", text)
 
+    def test_markdown_escapes_untrusted_environment_values(self):
+        report = self.module.build_report(
+            self.args(),
+            {"HOME": "/tmp", "ROS_DISTRO": "<script>alert(1)</script>|[link](bad)\nnext"},
+        )
+        text = self.module.markdown(report)
+        self.assertNotIn("<script>", text)
+        self.assertIn("&lt;script&gt;", text)
+        self.assertIn("\\|", text)
+        self.assertIn("\\[link\\]", text)
+
 
 if __name__ == "__main__":
     unittest.main()

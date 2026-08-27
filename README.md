@@ -4,6 +4,8 @@
 
 公司产品与工程服务入口：[上海桦之坚科技有限公司｜机器人产品与现场工程](https://jixun-robot-lab.guo1988yan.chatgpt.site/?src=github-skills-readme)
 
+免费工程资料：[安防巡检试点范围生成器](https://jixun-robot-lab.guo1988yan.chatgpt.site/security-pilot-scope-generator?src=github-skills-readme-security)，用于梳理现场路线、任务边界、证据等级与验收条件；填写内容仅在浏览器内处理，不触发真机。
+
 > 边界说明：本仓库包含集成、预检和验收方法，不代表宇树官方产品或官方认证，也不把离线检查、仿真或文档证据表述为真机量产能力。
 
 ## Skill 列表

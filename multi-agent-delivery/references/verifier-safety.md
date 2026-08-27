@@ -23,6 +23,6 @@ Independently verify that robot behavior remains inside the approved safety enve
 
 ## Report
 
-Write `.agent-delivery/test-reports/<work-item>-safety.md`. Every safety failure is blocking unless the approved acceptance contract explicitly says otherwise.
+Write `.agent-delivery/test-reports/<work-item>-safety.md`. Every safety failure is blocking unless the approved acceptance contract explicitly says otherwise. During the comprehensive pass, freeze the relevant normal, timing, stale-input, preemption, stop, restart, and fault-injection cases in each finding's re-acceptance matrix. Preserve that matrix during closure-only review.
 
 Return verdict, issue count, evidence level, authorization boundary, and report path.

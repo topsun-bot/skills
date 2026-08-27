@@ -27,6 +27,6 @@ Prove what the built system actually does at the strongest authorized evidence l
 
 ## Report
 
-Write `.agent-delivery/test-reports/<work-item>-runtime.md` with commands, environment, outputs, evidence paths, level, verdict, and issue-contract failures.
+Write `.agent-delivery/test-reports/<work-item>-runtime.md` with commands, environment, outputs, evidence paths, level, verdict, and issue-contract failures. During the comprehensive pass, freeze the relevant positive, delay/timeout, startup, restart, concurrency, resource-failure, and unavailable-dependency cases in each finding's re-acceptance matrix. Classify any later counterexample and do not silently raise the acceptance bar.
 
 Return verdict, issue count, actual evidence level, and report path.

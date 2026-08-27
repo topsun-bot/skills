@@ -14,6 +14,6 @@ Independently verify functional logic, algorithms, state machines, boundary beha
 
 ## Report
 
-Write `.agent-delivery/test-reports/<work-item>-logic.md`. Use the issue contract for every failure. For re-verification, preserve issue IDs, re-run the acceptance condition, and include relevant regressions.
+Write `.agent-delivery/test-reports/<work-item>-logic.md`. Use the issue contract for every failure. During the comprehensive pass, freeze the relevant positive, boundary, timing, concurrency, invalid-input, and failure-injection cases in each finding's re-acceptance matrix. For re-verification, preserve issue IDs, classify any later counterexample, re-run the frozen matrix, and include relevant regressions.
 
 Return verdict, issue count, evidence level, and report path.

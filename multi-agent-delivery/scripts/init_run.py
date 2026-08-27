@@ -26,7 +26,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--requirements", default="", help="Requirements file path")
     parser.add_argument("--domain", default="general", help="Task domain")
     parser.add_argument("--max-plan-rounds", type=int, default=3)
+    parser.add_argument("--max-plan-amendments", type=int, default=3)
     parser.add_argument("--max-repair-rounds", type=int, default=3)
+    parser.add_argument("--max-adjudicated-repair-rounds", type=int, default=1)
     return parser.parse_args()
 
 
@@ -43,8 +45,13 @@ def main() -> int:
     if not args.objective.strip():
         print("error: objective must not be empty", file=sys.stderr)
         return 2
-    if args.max_plan_rounds < 1 or args.max_repair_rounds < 1:
-        print("error: round limits must be positive", file=sys.stderr)
+    if (
+        args.max_plan_rounds < 1
+        or args.max_plan_amendments < 0
+        or args.max_repair_rounds < 1
+        or args.max_adjudicated_repair_rounds < 0
+    ):
+        print("error: ordinary round limits must be positive and optional limits non-negative", file=sys.stderr)
         return 2
 
     run_dir = root / ".agent-delivery"
@@ -75,8 +82,12 @@ def main() -> int:
         created_at=now,
         updated_at=now,
     )
-    state["plan"]["max_rounds"] = args.max_plan_rounds
+    state["plan"]["max_review_rounds"] = args.max_plan_rounds
+    state["plan"]["max_amendment_rounds"] = args.max_plan_amendments
     state["implementation"]["max_repair_rounds"] = args.max_repair_rounds
+    state["implementation"]["max_adjudicated_repair_rounds"] = (
+        args.max_adjudicated_repair_rounds
+    )
     state["convergence"]["last_progress_at"] = now
     state["audit_log"].append(
         {"at": now, "event": "run_initialized", "phase": "discovery"}
@@ -91,6 +102,7 @@ def main() -> int:
     copy_template("discovery.template.md", run_dir / "discovery.md")
     copy_template("plan.template.md", run_dir / "plan.md")
     copy_template("plan-review.template.md", run_dir / "plan-review.md")
+    copy_template("adjudication.template.md", run_dir / "adjudication.md")
     copy_template("lessons-learned.template.md", run_dir / "lessons-learned.md")
     (run_dir / "logs" / "main-log.md").write_text(
         f"# Delivery Log\n\n- {now} run initialized in discovery phase\n",

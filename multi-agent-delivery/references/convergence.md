@@ -43,6 +43,8 @@ Wording, severity explanation, or suggested implementation may change without cr
 
 Freeze before repair: a comprehensive reviewer or verifier must attempt every required surface, mark its report `COMPLETE`, and publish the full fingerprint set before the orchestrator sends ordinary repair work. A report with required `pending`, `deferred`, or `not counted` surfaces is not complete. Never let review and repair run against the same moving artifact.
 
+For every verifier fingerprint, freeze both the behavioral invariant and a re-acceptance matrix. Include the relevant positive control and foreseeable delay/timeout, concurrency, invalid-input, unavailable-dependency, and failure-injection cases. A later counterexample may refine proof of the same invariant, but the verifier must label why it was implied by the frozen contract; it may not silently raise the acceptance bar.
+
 When a prerequisite defect genuinely prevents later checks from producing meaningful evidence, allow one staged prerequisite repair while the report remains `IN_PROGRESS` and mode remains `comprehensive`. Resume the remaining first-pass checks afterward and freeze once. Never relabel a different later failure under the prerequisite fingerprint.
 
 Every blocking fingerprint must cite its authority: an explicit user requirement, an applicable repository instruction, an existing public/runtime contract, or a mandatory safety/security/data-loss invariant. A guarantee invented by the plan itself is not independent authority; the planner may remove or downgrade it instead of implementing speculative hardening.
@@ -65,7 +67,26 @@ Stop and escalate when:
 - A role exhausts its attempt budget.
 - The round limit is reached.
 
-At escalation, do one bounded root-cause or adjudication pass. The adjudicator may choose `PASS` with residual suggestions, `NEEDS_USER_DECISION`, `BLOCKED`, or `FAILED`; it may not request another ordinary rewrite round.
+Do not treat a shrinking ledger as churn: `10 → 4 → 1` is material progress even when the numerical round limit is reached. The limit still stops ordinary edits, but it triggers adjudication rather than automatically manufacturing a user-authorization boundary.
+
+At repair escalation, run one bounded independent root-cause adjudication using [adjudicator.md](adjudicator.md). The adjudicator may choose:
+
+- `AUTO_ROOT_CAUSE_REPAIR`: exactly one protocol-funded repair for the same frozen fingerprint set;
+- `NEEDS_USER_DECISION`: a real choice, disputed contract, scope expansion, or new authority is required;
+- `BLOCKED`: an external dependency or environment prevents progress;
+- `FAILED`: no viable evidence-backed hypothesis remains.
+
+`AUTO_ROOT_CAUSE_REPAIR` requires all of the following before editing:
+
+- an exact failing regression and decisive root-cause explanation;
+- one materially changed repair hypothesis;
+- unchanged owner, original verifier, application scope, and acceptance contract;
+- no hardware, production, credential, privacy, safety, destructive, or product authority beyond what the user already granted;
+- one frozen re-acceptance matrix that includes every previously exposed counterexample and relevant regressions.
+
+After that repair, the original verifier performs one closure-only check. Failure ends protocol-funded repair for that fingerprint set and requires `NEEDS_USER_DECISION`, `BLOCKED`, or `FAILED`; do not authorize a second automatic exception.
+
+Plan review, targeted plan amendments, ordinary implementation repair, and adjudicated repair use separate counters. Incrementing a plan version does not consume an initial plan-review round unless the initial gate is actually being re-reviewed. A targeted amendment does not reset any counter.
 
 ## State recording
 
@@ -84,5 +105,30 @@ Record phase attempts, last progress time, last artifact hash, and review histor
       "evidence": "requirements.md:R1"
     }
   ]
+}
+```
+
+Record a protocol-funded repair in `convergence.adjudication_history` before work starts:
+
+```json
+{
+  "id": "ADJ-WI-08A-001",
+  "kind": "repair",
+  "trigger": "repair_round_limit",
+  "work_item_id": "WI-08A",
+  "adjudicator_target": "adjudicate-runtime",
+  "fingerprints": ["R1|runtime-preflight|decision-time-freshness"],
+  "authority": "protocol",
+  "decision": "authorize_root_cause_repair",
+  "attempt": 1,
+  "scope_unchanged": true,
+  "acceptance_unchanged": true,
+  "new_authority_required": false,
+  "root_cause_evidence": ".agent-delivery/test-reports/WI-08A.md",
+  "failing_regression": "pytest -q tests/test_preflight_decision_time.py",
+  "reacceptance_matrix": ".agent-delivery/adjudication.md",
+  "owner_target": "impl-core",
+  "finder_target": "verify-runtime",
+  "status": "authorized"
 }
 ```

@@ -79,12 +79,12 @@ If the target cannot be resumed:
 
 ## Status and recovery
 
-Use bounded rounds, defaulting to three plan-review rounds and three repair rounds. Also bound agent attempts per phase: one original agent and at most one replacement by default. A resume or replacement that produces no required artifact counts as an attempt; replacements do not reset budgets.
+Use separate bounded counters, defaulting to three initial plan-review rounds, three targeted plan amendments, three ordinary repair rounds, and one adjudicated repair for a frozen fingerprint set. Also bound agent attempts per phase: one original agent and at most one replacement by default. A resume or replacement that produces no required artifact counts as an attempt; replacements do not reset budgets.
 
 Require artifact-first work. Discovery, planning, review, implementation, and verification agents must create or update their required status artifact before broad exploration, then refine it in place. Commentary, tool activity, or an active thread without a changed artifact hash is not progress.
 
 Freeze review scope after the first comprehensive report. Subsequent rounds close stable fingerprints. Do not permit a reviewer to continually discover unrelated blockers, turn suggestions into blockers, or expand the user's acceptance contract. See `convergence.md`.
 
-Repeated identical failure, an unchanged open-fingerprint set, or blocker churn without net reduction is a signal to stop editing and inspect root cause, assumptions, environment, reviewer scope, and plan validity.
+Repeated identical failure, an unchanged open-fingerprint set, or blocker churn without net reduction is a signal to stop ordinary editing and inspect root cause, assumptions, environment, reviewer scope, and plan validity. A shrinking ledger is progress, but reaching the ordinary limit still requires adjudication before another edit.
 
-Use `BLOCKED` for an external condition that prevents progress, `NEEDS_USER_DECISION` for an unresolved choice or authority boundary, and `FAILED` when attempts are exhausted without a viable path. Never relabel these states as success.
+Use `BLOCKED` for an external condition that prevents progress, `NEEDS_USER_DECISION` only for an unresolved choice or genuine authority boundary, and `FAILED` when attempts are exhausted without a viable path. Do not ask the user solely because a counter reached its limit when one eligible protocol-funded root-cause repair remains. Never relabel these states as success.

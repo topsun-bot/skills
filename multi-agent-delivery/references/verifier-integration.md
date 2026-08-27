@@ -22,6 +22,6 @@ Independently verify contracts and data flow across modules, services, middlewar
 
 ## Report
 
-Write `.agent-delivery/test-reports/<work-item>-integration.md`. Use the issue contract for failures and preserve issue IDs during re-verification.
+Write `.agent-delivery/test-reports/<work-item>-integration.md`. Use the issue contract for failures. During the comprehensive pass, freeze the relevant positive, delay/timeout, invalid/unavailable dependency, ordering, and failure-injection cases in each finding's re-acceptance matrix. Preserve issue IDs and classify any later counterexample during re-verification.
 
 Return verdict, issue count, actual evidence level, and report path.

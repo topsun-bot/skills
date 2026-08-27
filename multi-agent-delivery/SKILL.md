@@ -44,6 +44,8 @@ python3 <SKILL_ROOT>/scripts/init_run.py \
 
 Use `general` when no domain is known. Never overwrite an existing run implicitly.
 
+New runs use state schema v2 with separate review, amendment, ordinary-repair, and adjudicated-repair counters. Keep an active legacy schema v1 run intact rather than partially renaming its fields; the validator remains backward compatible.
+
 ## Execute the workflow
 
 ### 1. Discover evidence
@@ -68,6 +70,8 @@ If review fails:
 The first review must be comprehensive and freeze stable finding fingerprints. Later reviews are closure-only: re-evaluate existing fingerprints and add a new blocking finding only when the revision introduced it and the report proves that causal diff. Do not raise the acceptance bar, rename an old finding into a new one, or block on suggestions.
 
 Do not create implementation tasks while the plan gate is closed. Count original agents, resumes that fail to land, and replacements against the phase attempt budget. At either the round or attempt limit, return `NEEDS_USER_DECISION` with unresolved fingerprints instead of spawning another agent.
+
+After implementation starts, count targeted plan amendments separately from the initial plan-review rounds. An amendment does not reset either counter or reopen the comprehensive plan review.
 
 ### 3. Implement by ownership unit
 
@@ -97,9 +101,13 @@ For every failed verifier report:
 5. Send the repair batch back to the original verifier.
 6. Re-run the failed checks and relevant regression gates in closure-only mode.
 
-If the same failure repeats twice without meaningful change, stop the repair loop and perform root-cause analysis before another edit. At the repair-round limit, return `NEEDS_USER_DECISION` or `FAILED`; never force pass.
+If the same open fingerprint set repeats or the ordinary repair-round limit is reached, stop ordinary edits. Read [adjudicator.md](references/adjudicator.md) and delegate one independent root-cause adjudication. Do not ask the user merely because a counter reached its limit.
 
-The first verifier pass must report the complete issue set for its assigned acceptance surface. Re-verification is closure-only. A new blocking issue is allowed only when the repair introduced a regression and the verifier cites the causal diff and reproduction evidence.
+The adjudicator may authorize exactly one automatic root-cause repair for the frozen fingerprint set only when it provides a failing regression and decisive root cause, keeps the original owner, verifier, file scope, and acceptance contract, and requires no new consequential authority. Record `AUTO_ROOT_CAUSE_REPAIR` in `.agent-delivery/adjudication.md` and `run.json` before editing. Route that repair to the same implementer and its closure check to the same verifier.
+
+If the automatic root-cause repair fails, or adjudication finds a real product choice, scope expansion, disputed acceptance contract, hazardous action, credential/privacy boundary, production change, or unavailable external dependency, return `NEEDS_USER_DECISION`, `BLOCKED`, or `FAILED` as appropriate. Never force pass or create a second protocol-funded exception for the same fingerprint set.
+
+The first verifier pass must report the complete issue set and a re-acceptance matrix for its assigned surface. Include positive, delay/timeout, concurrency, invalid-input, and failure-injection cases that are relevant to the frozen invariant. Re-verification is closure-only. A later counterexample may refine the same invariant but may not raise the acceptance bar; label it explicitly. A new blocking issue is allowed only when the repair introduced a regression and the verifier cites the causal diff and reproduction evidence.
 
 ### 6. Audit final acceptance
 

@@ -29,6 +29,8 @@ Every requirement and acceptance condition must record provenance: `user`, `repo
 
 Treat `.agent-delivery/run.json` as the only authority for mutable approval status. Do not add `DRAFT`, `PENDING_REVIEW`, `APPROVED`, or another mutable gate status to `plan.md`; duplicating it creates stale state after review.
 
+Count the initial Plan Gate and post-approval targeted amendments separately. `plan.review_round` covers only the initial comprehensive/closure sequence. `plan.amendment_round` covers a later implementation-discovered contract or scope amendment. Increment `plan.version` for either, but never use the version number as a round budget and never reset one counter by moving work to the other.
+
 ## Review dimensions
 
 The plan reviewer must independently check:

@@ -13,7 +13,8 @@ Preserve the user's objective and operate the delivery state machine. Own routin
 - Track each agent target, role, owned scope, and report path.
 - Keep user updates concise and evidence-labeled.
 - Stop at authority, safety, or contract boundaries rather than guessing.
+- Do not manufacture a user-authorization boundary from a round counter. At a repair stop signal, route one independent adjudication and allow only the protocol-funded exception described in `convergence.md`.
 
 ## Output
 
-Maintain `.agent-delivery/run.json` and `.agent-delivery/logs/main-log.md`. Report phase, current gate, blockers, next action, and final evidence.
+Maintain `.agent-delivery/run.json`, `.agent-delivery/logs/main-log.md`, and `.agent-delivery/adjudication.md` when adjudication is triggered. Report phase, current gate, blockers, next action, and final evidence.

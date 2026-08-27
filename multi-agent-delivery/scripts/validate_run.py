@@ -21,6 +21,7 @@ PHASES = {
 }
 STATUSES = {"active", "complete", "blocked", "needs_user_decision", "failed"}
 LEVELS = {"E0": 0, "E1": 1, "E2": 2, "E3": 3, "E4": 4}
+TERMINAL_STATUSES = {"complete", "blocked", "needs_user_decision", "failed"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,10 +45,17 @@ def validate_review_history(
     label: str,
     max_rounds: int,
     errors: list[str],
-) -> None:
+    *,
+    allow_stall_for_adjudication: bool = False,
+) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "latest_open": set(),
+        "latest_round": 0,
+        "stalled_sets": [],
+    }
     require(isinstance(history, list), f"{label} must be a list", errors)
     if not isinstance(history, list):
-        return
+        return summary
 
     known: set[str] = set()
     previous_open: set[str] | None = None
@@ -126,12 +134,144 @@ def validate_review_history(
         known.update(unseen_this_round)
 
         if previous_open is not None:
-            require(current_open != previous_open, f"{label} stalled with an unchanged open fingerprint set", errors)
+            if current_open == previous_open and current_open:
+                if allow_stall_for_adjudication:
+                    summary["stalled_sets"].append(frozenset(current_open))
+                else:
+                    errors.append(f"{label} stalled with an unchanged open fingerprint set")
             newly_open = current_open - previous_open
             actually_closed = previous_open - current_open
             if newly_open and actually_closed and len(current_open) >= len(previous_open):
                 errors.append(f"{label} churned blockers without net reduction")
         previous_open = current_open
+
+        if isinstance(round_number, int) and round_number > summary["latest_round"]:
+            summary["latest_round"] = round_number
+            summary["latest_open"] = current_open
+
+    return summary
+
+
+def validate_adjudication_history(
+    history: Any,
+    max_protocol_rounds: int,
+    run_status: Any,
+    errors: list[str],
+) -> set[frozenset[str]]:
+    label = "convergence.adjudication_history"
+    require(isinstance(history, list), f"{label} must be a list", errors)
+    if not isinstance(history, list):
+        return set()
+
+    covered: set[frozenset[str]] = set()
+    protocol_counts: dict[frozenset[str], int] = {}
+    user_authorized: set[frozenset[str]] = set()
+    failed_protocol: set[frozenset[str]] = set()
+    seen_ids: set[str] = set()
+
+    for index, record in enumerate(history):
+        prefix = f"{label}[{index}]"
+        require(isinstance(record, dict), f"{prefix} must be an object", errors)
+        if not isinstance(record, dict):
+            continue
+
+        adjudication_id = record.get("id")
+        require(isinstance(adjudication_id, str) and bool(adjudication_id), f"{prefix} has invalid id", errors)
+        if isinstance(adjudication_id, str) and adjudication_id:
+            require(adjudication_id not in seen_ids, f"{label} repeats id {adjudication_id!r}", errors)
+            seen_ids.add(adjudication_id)
+
+        require(record.get("kind") == "repair", f"{prefix}.kind must be 'repair'", errors)
+        fingerprints = record.get("fingerprints")
+        require(
+            isinstance(fingerprints, list)
+            and bool(fingerprints)
+            and all(isinstance(value, str) and value for value in fingerprints),
+            f"{prefix} has invalid fingerprints",
+            errors,
+        )
+        if not isinstance(fingerprints, list) or not fingerprints:
+            continue
+        fingerprint_set = frozenset(value for value in fingerprints if isinstance(value, str) and value)
+        require(len(fingerprint_set) == len(fingerprints), f"{prefix} duplicates fingerprints", errors)
+
+        authority = record.get("authority")
+        decision = record.get("decision")
+        status = record.get("status")
+        require(authority in {"protocol", "user"}, f"{prefix} has invalid authority", errors)
+        require(
+            decision
+            in {
+                "pending",
+                "authorize_root_cause_repair",
+                "needs_user_decision",
+                "blocked",
+                "failed",
+            },
+            f"{prefix} has invalid decision",
+            errors,
+        )
+        require(
+            status in {"in_progress", "authorized", "fixed_pending_reverify", "passed", "failed"},
+            f"{prefix} has invalid status",
+            errors,
+        )
+        attempt = record.get("attempt")
+        require(isinstance(attempt, int) and attempt > 0, f"{prefix} has invalid attempt", errors)
+
+        if decision == "pending":
+            require(status == "in_progress", f"{prefix} pending decision must be in_progress", errors)
+
+        if authority == "protocol":
+            protocol_counts[fingerprint_set] = protocol_counts.get(fingerprint_set, 0) + 1
+            require(
+                protocol_counts[fingerprint_set] <= max_protocol_rounds,
+                f"{prefix} exceeds protocol-funded repair budget for its fingerprint set",
+                errors,
+            )
+            require(
+                isinstance(attempt, int) and attempt <= max_protocol_rounds,
+                f"{prefix} attempt exceeds protocol-funded repair budget",
+                errors,
+            )
+            if decision == "authorize_root_cause_repair":
+                require(record.get("scope_unchanged") is True, f"{prefix} changes approved scope", errors)
+                require(record.get("acceptance_unchanged") is True, f"{prefix} changes acceptance contract", errors)
+                require(record.get("new_authority_required") is False, f"{prefix} requires new user authority", errors)
+                for field in (
+                    "work_item_id",
+                    "adjudicator_target",
+                    "root_cause_evidence",
+                    "failing_regression",
+                    "reacceptance_matrix",
+                    "owner_target",
+                    "finder_target",
+                ):
+                    require(bool(record.get(field)), f"{prefix} is missing {field}", errors)
+                if record.get("adjudicator_target"):
+                    require(
+                        record.get("adjudicator_target")
+                        not in {record.get("owner_target"), record.get("finder_target")},
+                        f"{prefix} adjudicator must be independent from owner and finder",
+                        errors,
+                    )
+            if decision in {"pending", "authorize_root_cause_repair"}:
+                covered.add(fingerprint_set)
+            if status == "failed":
+                failed_protocol.add(fingerprint_set)
+        elif authority == "user" and decision == "authorize_root_cause_repair":
+            require(bool(record.get("scope")), f"{prefix} user exception lacks exact scope", errors)
+            user_authorized.add(fingerprint_set)
+            covered.add(fingerprint_set)
+
+    if run_status not in TERMINAL_STATUSES:
+        for fingerprint_set in failed_protocol - user_authorized:
+            errors.append(
+                f"{label} has a failed protocol-funded repair without terminal status or explicit user exception: "
+                f"{sorted(fingerprint_set)!r}"
+            )
+
+    return covered
 
 
 def main() -> int:
@@ -149,7 +289,8 @@ def main() -> int:
         return 2
 
     errors: list[str] = []
-    require(state.get("schema_version") == 1, "schema_version must be 1", errors)
+    schema_version = state.get("schema_version")
+    require(schema_version in {1, 2}, "schema_version must be 1 or 2", errors)
     require(state.get("skill") == "multi-agent-delivery", "skill name mismatch", errors)
     require(bool(str(state.get("objective", "")).strip()), "objective is empty", errors)
     require(state.get("phase") in PHASES, "invalid phase", errors)
@@ -159,12 +300,42 @@ def main() -> int:
     require(isinstance(plan, dict), "plan must be an object", errors)
     if isinstance(plan, dict):
         require(isinstance(plan.get("version"), int), "plan.version must be an integer", errors)
-        require(isinstance(plan.get("round"), int), "plan.round must be an integer", errors)
-        require(
-            isinstance(plan.get("max_rounds"), int) and plan.get("max_rounds", 0) > 0,
-            "plan.max_rounds must be positive",
-            errors,
-        )
+        if schema_version == 2:
+            review_round = plan.get("review_round")
+            max_review_rounds = plan.get("max_review_rounds")
+            amendment_round = plan.get("amendment_round")
+            max_amendment_rounds = plan.get("max_amendment_rounds")
+            require(
+                isinstance(review_round, int) and review_round >= 0,
+                "plan.review_round must be a non-negative integer",
+                errors,
+            )
+            require(
+                isinstance(max_review_rounds, int) and max_review_rounds > 0,
+                "plan.max_review_rounds must be positive",
+                errors,
+            )
+            if isinstance(review_round, int) and isinstance(max_review_rounds, int):
+                require(review_round <= max_review_rounds, "plan review round budget exceeded", errors)
+            require(
+                isinstance(amendment_round, int) and amendment_round >= 0,
+                "plan.amendment_round must be a non-negative integer",
+                errors,
+            )
+            require(
+                isinstance(max_amendment_rounds, int) and max_amendment_rounds >= 0,
+                "plan.max_amendment_rounds must be a non-negative integer",
+                errors,
+            )
+            if isinstance(amendment_round, int) and isinstance(max_amendment_rounds, int):
+                require(amendment_round <= max_amendment_rounds, "plan amendment round budget exceeded", errors)
+        else:
+            require(isinstance(plan.get("round"), int), "plan.round must be an integer", errors)
+            require(
+                isinstance(plan.get("max_rounds"), int) and plan.get("max_rounds", 0) > 0,
+                "plan.max_rounds must be positive",
+                errors,
+            )
         if state.get("phase") in {"implementation", "verification", "final_acceptance", "complete"}:
             require(plan.get("status") == "approved", "implementation started before plan approval", errors)
             require(plan.get("review_verdict") == "PASS", "plan review verdict is not PASS", errors)
@@ -181,6 +352,13 @@ def main() -> int:
     require(isinstance(implementation, dict), "implementation must be an object", errors)
     work_items = implementation.get("work_items", []) if isinstance(implementation, dict) else []
     require(isinstance(work_items, list), "implementation.work_items must be a list", errors)
+    if schema_version == 2 and isinstance(implementation, dict):
+        max_adjudicated = implementation.get("max_adjudicated_repair_rounds")
+        require(
+            isinstance(max_adjudicated, int) and max_adjudicated >= 0,
+            "implementation.max_adjudicated_repair_rounds must be a non-negative integer",
+            errors,
+        )
 
     verification = state.get("verification")
     require(isinstance(verification, dict), "verification must be an object", errors)
@@ -230,20 +408,67 @@ def main() -> int:
                 "convergence.last_progress_at must be a string",
                 errors,
             )
-            plan_round_limit = plan.get("max_rounds", 3) if isinstance(plan, dict) else 3
-            repair_round_limit = implementation.get("max_repair_rounds", 3) if isinstance(implementation, dict) else 3
+            if schema_version == 2 and isinstance(plan, dict):
+                plan_round_limit_value = plan.get("max_review_rounds", 3)
+                amendment_round_limit_value = plan.get("max_amendment_rounds", 3)
+            else:
+                plan_round_limit_value = plan.get("max_rounds", 3) if isinstance(plan, dict) else 3
+                amendment_round_limit_value = 0
+            repair_round_limit_value = (
+                implementation.get("max_repair_rounds", 3)
+                if isinstance(implementation, dict)
+                else 3
+            )
+            plan_round_limit = plan_round_limit_value if isinstance(plan_round_limit_value, int) else 0
+            amendment_round_limit = (
+                amendment_round_limit_value if isinstance(amendment_round_limit_value, int) else 0
+            )
+            repair_round_limit = repair_round_limit_value if isinstance(repair_round_limit_value, int) else 0
             validate_review_history(
                 convergence.get("plan_review_history", []),
                 "convergence.plan_review_history",
                 plan_round_limit,
                 errors,
             )
-            validate_review_history(
+            if schema_version == 2:
+                validate_review_history(
+                    convergence.get("plan_amendment_history", []),
+                    "convergence.plan_amendment_history",
+                    amendment_round_limit,
+                    errors,
+                )
+            repair_summary = validate_review_history(
                 convergence.get("repair_review_history", []),
                 "convergence.repair_review_history",
                 repair_round_limit,
                 errors,
+                allow_stall_for_adjudication=schema_version == 2,
             )
+            if schema_version == 2:
+                max_adjudicated_value = (
+                    implementation.get("max_adjudicated_repair_rounds", 1)
+                    if isinstance(implementation, dict)
+                    else 1
+                )
+                max_adjudicated = max_adjudicated_value if isinstance(max_adjudicated_value, int) else 0
+                covered = validate_adjudication_history(
+                    convergence.get("adjudication_history", []),
+                    max_adjudicated,
+                    state.get("status"),
+                    errors,
+                )
+                latest_open = frozenset(repair_summary["latest_open"])
+                reached_limit = (
+                    bool(latest_open)
+                    and repair_summary["latest_round"] >= repair_round_limit
+                )
+                stalled = bool(repair_summary["stalled_sets"])
+                if (reached_limit or stalled) and state.get("status") not in TERMINAL_STATUSES:
+                    require(
+                        latest_open in covered,
+                        "repair convergence stop lacks a matching adjudication record",
+                        errors,
+                    )
 
     for index, requirement in enumerate(requirements):
         required = requirement.get("required_level")

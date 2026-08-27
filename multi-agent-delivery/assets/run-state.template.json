@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "skill": "multi-agent-delivery",
   "objective": "",
   "domain": "general",
@@ -11,8 +11,10 @@
   "plan": {
     "version": 0,
     "status": "not_started",
-    "round": 0,
-    "max_rounds": 3,
+    "review_round": 0,
+    "max_review_rounds": 3,
+    "amendment_round": 0,
+    "max_amendment_rounds": 3,
     "author_target": null,
     "reviewer_target": null,
     "review_verdict": null,
@@ -21,6 +23,7 @@
   "implementation": {
     "started": false,
     "max_repair_rounds": 3,
+    "max_adjudicated_repair_rounds": 1,
     "work_items": []
   },
   "verification": {
@@ -47,7 +50,9 @@
     "last_progress_at": "",
     "last_artifact_hash": null,
     "plan_review_history": [],
-    "repair_review_history": []
+    "plan_amendment_history": [],
+    "repair_review_history": [],
+    "adjudication_history": []
   },
   "audit_log": []
 }

@@ -20,6 +20,8 @@ Every failed verification finding must contain:
 - Re-acceptance condition: <exact check>
 ```
 
+Under each fingerprint, freeze a compact re-acceptance matrix during the comprehensive pass. Cover the relevant positive control and foreseeable timing, timeout, concurrency, invalid-input, unavailable-dependency, and failure-injection cases. This matrix is part of the finding contract, not optional test advice.
+
 ## Routing
 
 1. During the first comprehensive verification, keep findings staged in an `IN_PROGRESS` report. The orchestrator must not route ordinary findings for repair yet.
@@ -49,4 +51,6 @@ If a repair needs a plan or interface change, return to plan review before editi
 - Add a later blocking issue only when the repair introduced a regression; cite the causal diff and fresh reproduction evidence.
 - Deduplicate equivalent symptoms with the same requirement, component, failure mode, and re-acceptance condition.
 - If the open fingerprint set is unchanged for two rounds, stop blind edits and perform root-cause analysis.
+- At an unchanged-set or ordinary-round limit, use one independent adjudication. Permit one automatic repair only under the eligibility rules in `convergence.md`; the same implementer repairs and the same verifier closes.
+- Classify a later test as `frozen_matrix`, `implied_counterexample`, or `repair_caused_regression`. An implied counterexample must cite the already-frozen invariant; it cannot change the required behavior or evidence level.
 - If issues close but unrelated new issues keep replacing them without net reduction, freeze the scope and return `NEEDS_USER_DECISION` or run one independent adjudication. Do not continue an unbounded worker-verifier loop.

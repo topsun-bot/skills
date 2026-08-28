@@ -1,11 +1,15 @@
 ---
 name: multi-agent-delivery
-description: Orchestrate complex, decomposable work through evidence discovery, independently reviewed planning, scoped implementation, specialized verification, same-agent repair, and final acceptance. Use when the user asks for multi-agent collaboration, parallel agents, long-running autonomous delivery, plan-review-implement-test loops, robotics development, or phrases such as "用多Agent协同完成", "启用多智能体交付模式", "开发和验收分开", or "持续做到验收通过". Do not use for simple one-step work, tightly coupled work that cannot be divided safely, or requests that only ask for an explanation without execution.
+description: Orchestrate explicitly requested multi-agent delivery through evidence discovery, independently reviewed planning, scoped implementation, specialized verification, same-agent repair, and final acceptance. Use only when the user explicitly invokes `$multi-agent-delivery` in the current request or explicitly attaches/selects this Skill in the UI. Do not invoke it implicitly from task complexity, robotics work, requests for parallel agents, long-running work, plan/review/test language, or any other inferred fit.
 ---
 
 # Multi-Agent Delivery
 
 Deliver complex work through explicit ownership and evidence gates. Keep the main agent focused on requirements, decisions, status, and acceptance while bounded agents perform discovery, planning, implementation, and verification.
+
+## Invocation gate
+
+Before loading or executing this protocol, confirm that the current user request explicitly contains `$multi-agent-delivery` or includes an explicit UI attachment/selection of this Skill. Otherwise do not initialize a run, create `.agent-delivery` artifacts, or spawn agents under this protocol. A matching domain, an existing unrelated delivery directory, an earlier invocation in the conversation, or wording about robots, complexity, planning, review, parallelism, autonomy, or testing is not consent to invoke this Skill.
 
 ## Non-negotiable invariants
 
@@ -125,4 +129,4 @@ Completion requires plan approval, all required work items complete, zero open b
 
 Report phase transitions, material blockers, authorization requests, and final evidence. Avoid narrating every agent message. Distinguish verified facts, recommendations, inferences, and unverified boundaries.
 
-Use `$multi-agent-delivery` for explicit invocation. Keep implicit invocation enabled for clear multi-agent delivery requests.
+Treat `$multi-agent-delivery` or an explicit UI Skill attachment in the current request as the only invocation signal. Keep implicit invocation disabled.

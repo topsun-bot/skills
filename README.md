@@ -6,6 +6,8 @@
 
 免费工程资料：[安防巡检试点范围生成器](https://jixun-robot-lab.guo1988yan.chatgpt.site/security-pilot-scope-generator?src=github-skills-readme-security)，用于梳理现场路线、任务边界、证据等级与验收条件；填写内容仅在浏览器内处理，不触发真机。
 
+一元书面初筛：[提交一个具体的 G1 或 Go2W 二次开发问题](https://jixun-robot-lab.guo1988yan.chatgpt.site/one-yuan-unitree-precheck?src=github-skills-readme-one-yuan)，获取“已知事实、证据缺口、下一步只读检查”三项结果；付款以收款人微信到账记录为准，浏览和表单提交不代表已付款。
+
 公开答疑：[宇树 G1、Go2W 二次开发、安防导航与机械臂集成](https://github.com/topsun-bot/skills/issues/15)，可提交已脱敏的型号、版本、现象、目标和验收要求。
 
 > 边界说明：本仓库包含集成、预检和验收方法，不代表宇树官方产品或官方认证，也不把离线检查、仿真或文档证据表述为真机量产能力。

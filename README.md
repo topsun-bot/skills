@@ -1,16 +1,22 @@
-# 自研 Skills
+# 上海桦之坚科技有限公司｜机器人产品与现场工程
 
-这个公开仓库集中维护可复用的 Codex Skills。当前与机器人相关的内容覆盖 Unitree G1 / Go2W 上机前只读预检，以及巡检机器人 HTTP / ROS 2 API 对接、试运行验收和安全证据；所有机器人运动或生产系统写入都必须单独授权。
+本仓库维护可复用的机器人工程 Skills，并作为上海桦之坚科技有限公司的公开技术入口。当前聚焦宇树 G1 / Go2W 二次开发、安防自主导航、机械臂集成、ROS 2 / SDK 联调和现场试点验收。
 
-公司产品与工程服务入口：[上海桦之坚科技有限公司｜机器人产品与现场工程](https://jixun-robot-lab.guo1988yan.chatgpt.site/?src=github-skills-readme)
+## G1 / Go2W 现场工程服务
 
-免费工程资料：[安防巡检试点范围生成器](https://jixun-robot-lab.guo1988yan.chatgpt.site/security-pilot-scope-generator?src=github-skills-readme-security)，用于梳理现场路线、任务边界、证据等级与验收条件；填写内容仅在浏览器内处理，不触发真机。
+- **Go2W 安防自主导航**：团队陈述已有安防场景自主导航演示，可继续拆分地图、定位、避障、停止、断网恢复、告警和工单接口；演示不等于第三方客户验收、连续无人值守或安全认证。
+- **G1 机械臂与移动操作**：可围绕机械臂集成、抓取、按钮、开关门和受约束维修任务做接口与验证；具体能力仍需按本体自由度、末端工具、负载、控制模式和现场条件确认。
+- **ROS 2 / SDK 二次开发**：覆盖网络、DDS、固件、模式、控制权、状态新鲜度、导航接口和证据化验收；默认先做离线、仿真和只读检查，任何真机运动或生产写入必须单独授权。
+
+完整服务页：[宇树 G1 与 Go2W 二次开发｜自主导航、机械臂集成与试点验收](https://jixun-robot-lab.guo1988yan.chatgpt.site/unitree-g1-go2w-secondary-development?src=github-skills-readme-unitree-service)
 
 一元书面初筛：[提交一个具体的 G1 或 Go2W 二次开发问题](https://jixun-robot-lab.guo1988yan.chatgpt.site/one-yuan-unitree-precheck?src=github-skills-readme-one-yuan)，获取“已知事实、证据缺口、下一步只读检查”三项结果；付款以收款人微信到账记录为准，浏览和表单提交不代表已付款。
 
+免费工程资料：[安防巡检试点范围生成器](https://jixun-robot-lab.guo1988yan.chatgpt.site/security-pilot-scope-generator?src=github-skills-readme-security)，用于梳理现场路线、任务边界、证据等级与验收条件；填写内容仅在浏览器内处理，不触发真机。
+
 公开答疑：[宇树 G1、Go2W 二次开发、安防导航与机械臂集成](https://github.com/topsun-bot/skills/issues/15)，可提交已脱敏的型号、版本、现象、目标和验收要求。
 
-> 边界说明：本仓库包含集成、预检和验收方法，不代表宇树官方产品或官方认证，也不把离线检查、仿真或文档证据表述为真机量产能力。
+> 边界说明：本仓库包含独立集成、预检和验收方法，不属于宇树官方支持或官方认证，不把团队演示、离线检查、仿真或文档证据表述为量产、客户案例或真机验收。
 
 ## Skill 列表
 

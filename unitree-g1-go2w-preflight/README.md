@@ -23,6 +23,14 @@
 
 填写内容只在浏览器内处理，不上传、不控制机器人。生成结果用于需求澄清，不是安全认证、投标资格或生产验收凭证。
 
+## 一元书面初筛
+
+如果你只有一个具体的 G1 或 Go2W 二次开发问题，可以提交一次一元书面初筛：
+
+[提交一个具体问题，获取已知事实、证据缺口和下一步只读检查](https://jixun-robot-lab.guo1988yan.chatgpt.site/one-yuan-unitree-precheck?src=github-unitree-preflight-readme-one-yuan)
+
+初筛不发送机器人运动、电机、机械臂、夹爪、模式切换或生产系统写入指令；不替代宇树官方支持、安全认证、设备维修、现场验收或完整项目诊断。付款以收款人的微信到账记录为准，页面浏览、表单提交和收款码展示都不代表已付款。
+
 ## 产品与项目咨询
 
 [上海桦之坚科技有限公司｜机器人产品与现场工程](https://jixun-robot-lab.guo1988yan.chatgpt.site/?src=github-unitree-preflight-readme)

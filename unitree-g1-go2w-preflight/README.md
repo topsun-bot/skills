@@ -29,6 +29,14 @@
 
 适合咨询的内容包括：机器人型号与配置、现场路线、期望任务、现有软件版本、计划周期、需要交付的代码、文档、培训和验收方式。
 
+## 近期公开问题：返回成功但状态不变
+
+宇树官方 Python 软件开发工具包的 [G1 EDU+ 1.5.3 开放问题 #170](https://github.com/unitreerobotics/unitree_sdk2_python/issues/170) 记录了一种典型现象：运动或状态设置接口返回 0，但状态读回没有变化、机器人没有产生物理动作，同时控制租约请求失败。
+
+这类问题应拆成“请求返回、状态读回、控制权、状态新鲜度、物理结果”五层证据。当前公开记录不能证明统一根因，也不能推出任意固件降级、模式写入或重复发送速度命令是安全修复。
+
+[查看 G1 固件、模式与控制权证据清单](https://jixun-robot-lab.guo1988yan.chatgpt.site/g1-firmware-mode-control-authority?src=github-unitree-preflight-readme-control-authority)
+
 ## 工程证据边界
 
 - 网络连通不代表机器人状态新鲜；

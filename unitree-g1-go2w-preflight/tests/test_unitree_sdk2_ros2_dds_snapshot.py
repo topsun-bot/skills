@@ -7,6 +7,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts/unitree_sdk2_ros2_dds_snapshot.py"
@@ -55,17 +56,71 @@ class SnapshotTests(unittest.TestCase):
             root = Path(tmp)
             proc = root / "proc/123"
             proc.mkdir(parents=True)
-            lib_a, lib_b = root / "a/libddsc.so", root / "b/libddsc.so"
-            lib_a.parent.mkdir(); lib_b.parent.mkdir()
+            lib_a, lib_b = proc / "root/a/libddsc.so", proc / "root/b/libddsc.so"
+            lib_a.parent.mkdir(parents=True); lib_b.parent.mkdir(parents=True)
             lib_a.write_bytes(b"a"); lib_b.write_bytes(b"b")
-            (proc / "maps").write_text(f"0-1 r-xp 0 00:00 0 {lib_a}\n1-2 r-xp 0 00:00 0 {lib_b}\n")
+            (proc / "maps").write_text("0-1 r-xp 0 00:00 0 /a/libddsc.so\n1-2 r-xp 0 00:00 0 /b/libddsc.so\n")
             (proc / "environ").write_bytes(b"ROS_DOMAIN_ID=0\0SECRET=nope\0")
             (proc / "cmdline").write_bytes(b"/usr/bin/node\0--ros-args\0")
             report = self.module.build_report(self.args(process_pid=123, proc_root=root / "proc"), {"HOME": "/home/test"})
             finding = next(item for item in report["binary_findings"] if item["kind"] == "ddsc")
             self.assertEqual(finding["status"], "contradicted")
             self.assertEqual(finding["distinct_hashes"], 2)
+            self.assertEqual(report["process"]["loaded_libraries"][0]["path"], "/a/libddsc.so")
             self.assertNotIn("nope", json.dumps(report))
+
+    def test_failed_map_open_keeps_process_evidence_not_proved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            (proc / "root").mkdir(parents=True)
+            (proc / "maps").write_text("0-1 r-xp 0 00:00 0 /libddsc.so\n")
+            (proc / "environ").write_bytes(b"HOME=/home/robot\0")
+            with mock.patch.object(self.module, "open_target_fd", side_effect=PermissionError("denied")):
+                report = self.module.build_report(
+                    self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                    {"HOME": "/home/collector"},
+                )
+            self.assertEqual(report["process"]["status"], "not_proved")
+            self.assertEqual(report["process"]["loaded_libraries"][0]["sha256"], None)
+            self.assertEqual(len(report["process"]["map_open_failures"]), 1)
+            self.assertIn("could not be opened", report["process"]["reason"])
+
+    def test_partial_map_evidence_cannot_prove_one_binary_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            library = proc / "root/a/libddsc.so"
+            library.parent.mkdir(parents=True)
+            library.write_bytes(b"one-readable-build")
+            (proc / "maps").write_text("0-1 r-xp 0 00:00 0 /a/libddsc.so\n1-2 r-xp 0 00:00 0 /missing/libddsc.so\n")
+            (proc / "environ").write_bytes(b"HOME=/home/robot\0")
+            report = self.module.build_report(
+                self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                {"HOME": "/home/collector"},
+            )
+            finding = next(item for item in report["binary_findings"] if item["kind"] == "ddsc")
+            self.assertEqual(report["process"]["status"], "not_proved")
+            self.assertEqual(finding["distinct_hashes"], 1)
+            self.assertEqual(finding["status"], "not_proved")
+            self.assertIn("incomplete", finding["meaning"])
+
+    def test_fifo_replacing_deleted_map_path_does_not_block(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            fifo = proc / "root/libddsc.so"
+            fifo.parent.mkdir(parents=True)
+            os.mkfifo(fifo)
+            (proc / "maps").write_text("0-1 r-xp 0 00:00 0 /libddsc.so (deleted)\n")
+            (proc / "environ").write_bytes(b"HOME=/home/robot\0")
+            report = self.module.build_report(
+                self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                {"HOME": "/home/collector"},
+            )
+            self.assertEqual(report["process"]["status"], "not_proved")
+            self.assertEqual(report["process"]["loaded_libraries"][0]["sha256"], None)
+            self.assertIn("not a regular file", report["process"]["map_open_failures"][0]["reason"])
 
     def test_target_process_environment_does_not_inherit_collector_values(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -122,10 +177,11 @@ class SnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             proc = root / "proc/123"
-            cwd_config = proc / "cwd/cyclone.xml"
+            cwd_config = proc / "root/work/cyclone.xml"
             home_config = proc / "root/home/robot/cyclone.xml"
             cwd_config.parent.mkdir(parents=True)
             home_config.parent.mkdir(parents=True)
+            (proc / "cwd").symlink_to("/work")
             cwd_config.write_text('<CycloneDDS><Domain Id="cwd"/></CycloneDDS>')
             home_config.write_text('<CycloneDDS><Domain Id="home"/></CycloneDDS>')
             (proc / "maps").write_text("")
@@ -137,6 +193,24 @@ class SnapshotTests(unittest.TestCase):
                         {"HOME": "/home/collector"},
                     )
                     self.assertEqual(report["cyclonedds_config"]["domain_ids"], [expected])
+
+    def test_target_absolute_symlink_stays_inside_target_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            target_config = proc / "root/real/cyclone.xml"
+            link = proc / "root/etc/cyclone.xml"
+            target_config.parent.mkdir(parents=True)
+            link.parent.mkdir(parents=True)
+            target_config.write_text('<CycloneDDS><Domain Id="target-symlink"/></CycloneDDS>')
+            link.symlink_to("/real/cyclone.xml")
+            (proc / "maps").write_text("")
+            (proc / "environ").write_bytes(b"CYCLONEDDS_URI=/etc/cyclone.xml\0HOME=/home/robot\0")
+            report = self.module.build_report(
+                self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                {"HOME": "/home/collector"},
+            )
+            self.assertEqual(report["cyclonedds_config"]["domain_ids"], ["target-symlink"])
 
     def test_unreadable_target_config_is_not_contradicted(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -161,6 +235,152 @@ class SnapshotTests(unittest.TestCase):
             report = self.module.build_report(self.args(search_prefix=[root]), {"HOME": "/tmp"})
             self.assertEqual(len(report["library_candidates"]), 2)
             self.assertEqual(report["binary_findings"], [])
+
+    def test_target_candidate_prefixes_use_target_namespace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            target_lib = proc / "root/opt/robot/lib/libddsc.so"
+            target_lib.parent.mkdir(parents=True)
+            target_lib.write_bytes(b"target-dds")
+            (proc / "maps").write_text("")
+            (proc / "environ").write_bytes(b"LD_LIBRARY_PATH=/opt/robot\0HOME=/home/robot\0")
+            report = self.module.build_report(
+                self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                {"HOME": "/home/collector"},
+            )
+            self.assertEqual(len(report["library_candidates"]), 1)
+            self.assertEqual(report["library_candidates"][0]["path"], "/opt/robot/lib/libddsc.so")
+            self.assertEqual(report["library_candidates"][0]["sha256"], self.module.sha256_file(target_lib))
+            self.assertEqual(report["library_candidate_prefixes"][0]["filesystem_scope"], "target_process_namespace")
+            self.assertEqual(report["binary_findings"], [])
+
+    def test_target_library_absolute_symlink_stays_inside_target_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            real_lib = proc / "root/real/libddsc.so"
+            linked_lib = proc / "root/opt/robot/lib/libddsc.so"
+            real_lib.parent.mkdir(parents=True)
+            linked_lib.parent.mkdir(parents=True)
+            real_lib.write_bytes(b"target-symlink-dds")
+            linked_lib.symlink_to("/real/libddsc.so")
+            (proc / "maps").write_text("")
+            (proc / "environ").write_bytes(b"LD_LIBRARY_PATH=/opt/robot\0HOME=/home/robot\0")
+            report = self.module.build_report(
+                self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                {"HOME": "/home/collector"},
+            )
+            self.assertEqual(report["library_candidates"][0]["sha256"], self.module.sha256_file(real_lib))
+
+    def test_unenumerable_target_prefix_is_not_proved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            (proc / "root/opt/robot").mkdir(parents=True)
+            (proc / "maps").write_text("")
+            (proc / "environ").write_bytes(b"LD_LIBRARY_PATH=/opt/robot\0HOME=/home/robot\0")
+            with mock.patch.object(self.module.os, "listdir", side_effect=PermissionError("denied")):
+                report = self.module.build_report(
+                    self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                    {"HOME": "/home/collector"},
+                )
+            self.assertEqual(report["library_candidate_prefixes"][0]["status"], "not_proved")
+            self.assertIn("PermissionError", report["library_candidate_prefixes"][0]["reason"])
+
+    def test_fifo_candidate_does_not_block_and_is_not_proved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            fifo = proc / "root/opt/robot/lib/libddsc.so"
+            fifo.parent.mkdir(parents=True)
+            os.mkfifo(fifo)
+            (proc / "maps").write_text("")
+            (proc / "environ").write_bytes(b"LD_LIBRARY_PATH=/opt/robot\0HOME=/home/robot\0")
+            report = self.module.build_report(
+                self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                {"HOME": "/home/collector"},
+            )
+            self.assertEqual(report["library_candidates"], [])
+            self.assertEqual(report["library_candidate_prefixes"][0]["status"], "not_proved")
+            self.assertIn("not a regular file", report["library_candidate_prefixes"][0]["reason"])
+
+    def test_non_utf8_candidate_filename_is_escaped_and_hashed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            directory = proc / "root/opt/robot/lib"
+            directory.mkdir(parents=True)
+            backing_file = root / "backing-libddsc.so"
+            backing_file.write_bytes(b"non-utf8-name")
+            (proc / "maps").write_text("")
+            (proc / "environ").write_bytes(b"LD_LIBRARY_PATH=/opt/robot\0HOME=/home/robot\0")
+            real_open_target_fd = self.module.open_target_fd
+
+            def open_target(logical, pid, proc_root, *, directory=False, nonblocking=False):
+                if "\udcff" in str(logical):
+                    return os.open(backing_file, os.O_RDONLY)
+                return real_open_target_fd(logical, pid, proc_root, directory=directory, nonblocking=nonblocking)
+
+            with mock.patch.object(self.module.os, "listdir", return_value=["libddsc\udcff.so"]), \
+                 mock.patch.object(self.module, "open_target_fd", side_effect=open_target):
+                report = self.module.build_report(
+                    self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                    {"HOME": "/home/collector"},
+                )
+            self.assertEqual(report["library_candidate_prefixes"][0]["status"], "proved")
+            self.assertIn("\\xff", report["library_candidates"][0]["path"])
+            self.assertIsNotNone(report["library_candidates"][0]["sha256"])
+            json.dumps(report, ensure_ascii=False).encode("utf-8")
+
+    def test_non_utf8_candidate_open_failure_is_serializable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            (proc / "root/opt/robot").mkdir(parents=True)
+            (proc / "maps").write_text("")
+            (proc / "environ").write_bytes(b"LD_LIBRARY_PATH=/opt/robot\0HOME=/home/robot\0")
+            real_open_target_fd = self.module.open_target_fd
+
+            def open_target(logical, pid, proc_root, *, directory=False, nonblocking=False):
+                if "\udcff" in str(logical):
+                    raise PermissionError("denied")
+                return real_open_target_fd(logical, pid, proc_root, directory=directory, nonblocking=nonblocking)
+
+            with mock.patch.object(self.module.os, "listdir", return_value=["libddsc\udcff.so"]), \
+                 mock.patch.object(self.module, "open_target_fd", side_effect=open_target):
+                report = self.module.build_report(
+                    self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                    {"HOME": "/home/collector"},
+                )
+            reason = report["library_candidate_prefixes"][0]["reason"]
+            self.assertIn("\\xff", reason)
+            json.dumps(report, ensure_ascii=False).encode("utf-8")
+
+    def test_unenumerable_collector_prefix_is_not_proved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp)
+            with mock.patch.object(self.module.os, "scandir", side_effect=PermissionError("denied")):
+                report = self.module.build_report(self.args(search_prefix=[prefix]), {"HOME": "/home/collector"})
+            self.assertEqual(report["library_candidate_prefixes"][0]["status"], "not_proved")
+            self.assertIn("PermissionError", report["library_candidate_prefixes"][0]["reason"])
+
+    def test_relative_target_candidate_prefix_uses_target_cwd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proc = root / "proc/123"
+            target_lib = proc / "root/work/vendor/lib/libddsc.so"
+            target_lib.parent.mkdir(parents=True)
+            target_lib.write_bytes(b"relative-target-dds")
+            (proc / "cwd").symlink_to("/work")
+            (proc / "maps").write_text("")
+            (proc / "environ").write_bytes(b"LD_LIBRARY_PATH=vendor\0HOME=/home/robot\0")
+            report = self.module.build_report(
+                self.args(process_pid=123, proc_root=root / "proc", ros_domain=None),
+                {"HOME": "/home/collector"},
+            )
+            self.assertEqual(report["library_candidates"][0]["path"], "target_cwd:vendor/lib/libddsc.so")
+            self.assertEqual(report["library_candidates"][0]["sha256"], self.module.sha256_file(target_lib))
 
     def test_domain_relationship_is_descriptive_only(self):
         report = self.module.build_report(self.args(unitree_domain=1, ros_domain=0), {"HOME": "/tmp"})
@@ -191,9 +411,10 @@ class SnapshotTests(unittest.TestCase):
             root = Path(tmp)
             proc = root / "proc/123"
             proc.mkdir(parents=True)
-            library = root / "libddsc.so"
+            library = proc / "root/libddsc.so"
+            library.parent.mkdir(parents=True)
             library.write_bytes(b"dds-build")
-            (proc / "maps").write_text(f"0-1 r-xp 0 00:00 0 {library}\n")
+            (proc / "maps").write_text("0-1 r-xp 0 00:00 0 /libddsc.so\n")
             (proc / "environ").write_bytes(b"ROS_DISTRO=humble\0ROS_DOMAIN_ID=7\0")
             (proc / "cmdline").write_bytes(b"/usr/bin/robot-node\0")
             xml = '<CycloneDDS><Domain Id="7"><General><Interfaces><NetworkInterface name="eth0" address="10.0.0.2"/></Interfaces></General></Domain></CycloneDDS>'
@@ -205,7 +426,7 @@ class SnapshotTests(unittest.TestCase):
             self.assertIn("robot-node", text)
             self.assertIn("ROS_DISTRO", text)
             self.assertIn("humble", text)
-            self.assertIn(str(library), text)
+            self.assertIn("/libddsc.so", text)
             self.assertIn(self.module.sha256_file(library), text)
             self.assertIn(report["cyclonedds_config"]["sha256"], text)
             self.assertNotIn("10.0.0.2", text)

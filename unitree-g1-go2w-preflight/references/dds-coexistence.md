@@ -24,10 +24,12 @@ python3 scripts/unitree_sdk2_ros2_dds_snapshot.py \
 
 The collector creates no DDS participant, sends no network packet, imports no ROS/Unitree package, and sends no robot command. It intentionally omits hostnames, IP/peer addresses, and non-whitelisted environment variables.
 
-Collector V1.2 preserves these evidence scopes:
+Collector V1.4 preserves these evidence scopes:
 
 - with `--process-pid`, target conclusions use only the target process environment plus explicit CLI overrides; an unreadable target `environ` stays `not_proved` instead of inheriting the collector shell;
-- target-owned absolute, relative, and `~` configuration paths are read through `/proc/<pid>/root`, `/proc/<pid>/cwd`, and the captured target HOME; if that namespace evidence is unavailable, the configuration stays `not_proved`;
+- target-owned absolute, relative, `~`, and symlinked configuration/library paths are opened from a target-root file descriptor with Linux `openat2(RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS)`; if the kernel or namespace evidence is unavailable, the result stays `not_proved`;
+- paths reported by `/proc/<pid>/maps` keep their target-visible label, while metadata and SHA-256 are computed from the already-open target file descriptor; `/proc/<pid>/root` is never collapsed with `Path.resolve()`;
+- a configured prefix is `proved` only after successful directory enumeration with no scan error; a directory that can be statted but not enumerated remains `not_proved`;
 - libraries found under configured prefixes are installation candidates and remain separate from `/proc/<pid>/maps` loaded libraries;
 - only distinct hashes actually loaded by the target process can produce a loaded-build conflict signal;
 - Markdown includes the safe environment, command basename, loaded paths and hashes, configured candidates, parsed/redacted CycloneDDS configuration, and package versions;

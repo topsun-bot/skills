@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f2ecdf">
+  <title>__DECK_TITLE__</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='17' fill='%23f2ecdf'/%3E%3Cpath d='M17 32c7-15 14-15 22 0 8 15 15 15 22 0M17 32c7 15 14 15 22 0 8-15 15-15 22 0' fill='none' stroke='%23202521' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#stage">跳到演讲内容</a>
+  <main class="shell">
+    <header class="topbar">
+      <button class="brand" id="brandButton" type="button" aria-label="回到第一页">
+        <span class="brand-mark" aria-hidden="true">∞</span>
+        <span><strong id="brandTitle">VISUAL FIELD NOTES</strong><small id="brandSubtitle">互动网页演讲册</small></span>
+      </button>
+      <div class="mode-switch" role="group" aria-label="浏览模式">
+        <button id="exploreMode" class="active" type="button" aria-pressed="true">✦ 探索模式</button>
+        <button id="presentMode" type="button" aria-pressed="false">▶ 演讲模式</button>
+      </div>
+      <nav class="utility" aria-label="演讲工具">
+        <button id="mapButton" type="button" title="路径图 M">◉ <span>MAP</span></button>
+        <button id="fxButton" class="active" type="button" title="动效开关 X" aria-pressed="true">✦ <span>FX</span></button>
+        <button id="soundButton" type="button" title="转场音效 S" aria-pressed="false">♫</button>
+        <button id="fullscreenButton" type="button" title="全屏 F">⤢</button>
+      </nav>
+    </header>
+
+    <section class="breadcrumb" aria-label="当前位置"><button id="overviewButton" type="button">全景</button><span>/</span><span id="breadcrumbTitle"></span><button id="historyBackButton" type="button" disabled>↶ 返回上一访问页</button></section>
+
+    <section class="paper-stack" id="stage" tabindex="-1" aria-live="polite">
+      <div class="slide" id="slide">
+        <img id="heroImage" alt="">
+        <div class="generated-visual" id="generatedVisual" aria-hidden="true"></div>
+        <div class="wash"></div>
+        <article class="story-card" id="storyCard">
+          <p class="eyebrow"><span id="pageNumber">01</span><span id="chapter"></span></p>
+          <h1 id="pageTitle"></h1>
+          <p class="subtitle" id="pageSubtitle"></p>
+          <p class="claim" id="pageClaim"></p>
+        </article>
+        <div class="hotspots" id="hotspots" aria-label="图中可探索区域"></div>
+        <div class="present-nav" id="presentNav">
+          <button id="prevButton" type="button">← <span>PREV</span></button>
+          <strong><span id="presentIndex">01</span><small id="presentTotal">/ 01</small></strong>
+          <button id="nextButton" type="button"><span>NEXT</span> →</button>
+        </div>
+        <aside class="knowledge-card" id="knowledgeCard" aria-live="polite" hidden></aside>
+      </div>
+    </section>
+
+    <section class="deskbar">
+      <div class="desk-actions">
+        <button id="playButton" type="button">▶ 计时本页</button>
+        <button id="notesButton" type="button">≡ <span>演讲稿</span><kbd>N</kbd></button>
+        <button id="evidenceButton" type="button">✓ <span>参考资料</span><kbd>R</kbd></button>
+      </div>
+      <div class="progress" id="progress" aria-label="页面进度"></div>
+      <button class="timer" id="timerButton" type="button"><small>TIMER</small><strong id="timer">00:00</strong></button>
+    </section>
+  </main>
+
+  <dialog id="mapDialog" class="map-dialog">
+    <form method="dialog"><button class="round-close" aria-label="关闭路径图">×</button></form>
+    <p class="dialog-label">BRANCH MAP</p>
+    <h2>从全景进入局部，也可以从任意节点重新开始</h2>
+    <div class="map-grid" id="mapGrid"></div>
+    <p class="shortcuts">快捷键：←/→ 翻页 · M 路径图 · N 演讲稿 · R 资料 · X 动效 · F 全屏 · Esc 关闭</p>
+  </dialog>
+
+  <aside class="drawer" id="notesDrawer" aria-hidden="true" inert>
+    <div class="drawer-head"><div><p id="notesMeta"></p><h2 id="notesTitle"></h2></div><button class="round-close" data-close="notesDrawer" aria-label="关闭演讲稿">×</button></div>
+    <p class="cue-label">看图</p><p id="visualCue"></p>
+    <article id="speakerNotes"></article>
+    <p class="cue-label">转场</p><p id="transition"></p>
+    <div class="copy-row"><button id="copyPage" type="button">复制本页</button><button id="copyAll" type="button">复制完整稿</button></div>
+  </aside>
+
+  <aside class="drawer" id="evidenceDrawer" aria-hidden="true" inert>
+    <div class="drawer-head"><div><p id="evidenceMeta"></p><h2 id="evidenceTitle"></h2></div><button class="round-close" data-close="evidenceDrawer" aria-label="关闭参考资料">×</button></div>
+    <p class="cue-label">本页结论与适用边界</p><p id="boundary"></p>
+    <div class="source-list" id="sourceList"></div>
+    <p class="image-note">插图用于解释与讲演；除非明确标注，否则不应视为原始证据或纪实影像。</p>
+  </aside>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="deck-data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

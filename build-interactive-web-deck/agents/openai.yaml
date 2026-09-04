@@ -1,0 +1,4 @@
+interface:
+  display_name: "互动网页演讲册"
+  short_description: "把任意材料转成手绘感、可探索、可演讲、可追溯的高级网页演讲册"
+  default_prompt: "Use $build-interactive-web-deck to turn this material into a polished interactive web presentation."

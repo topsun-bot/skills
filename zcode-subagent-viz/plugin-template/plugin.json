@@ -1,0 +1,11 @@
+{
+  "name": "zcode-subagent-viz",
+  "displayName": "ZCode Subagent Visualizer",
+  "version": "1.0.0",
+  "description": "Port of zai-org/ZCode subagent visualization (WorkflowTimeline, 9-color WorkflowAgentFace, WorkflowAgentPill, Spine & SubagentDirectory) for Google Antigravity.",
+  "suggestedPrompts": [
+    "可视化当前会话或历史会话的子Agent拓扑与执行轨迹",
+    "打开 ZCode 子代理可视化副屏面板",
+    "查看所有并行子Agent的阶段耗时与Token消耗"
+  ]
+}

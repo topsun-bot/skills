@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate skills, scripts, and tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile Python sources
+        run: python -m compileall -q -f
+          ci
+          multi-agent-delivery
+          unitree-g1-go2w-preflight
+          g1-controller-temperature-evidence
+          build-interactive-web-deck
+
+      - name: Validate skill-pack manifests, JSON, and relative links
+        run: python ci/validate_skill_pack.py
+
+      - name: Run unit tests
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s ci -p 'test_*.py' -v
+          python -m unittest discover -s multi-agent-delivery/tests -p 'test_*.py' -v
+          python -m unittest discover -s unitree-g1-go2w-preflight/tests -p 'test_*.py' -v
+          python g1-controller-temperature-evidence/scripts/test_analyze_temperature_ab.py -v
+
+      - name: Dry-run shipped validators and scaffolds
+        run: |
+          set -euo pipefail
+          python unitree-g1-go2w-preflight/scripts/validate_evidence.py \
+            unitree-g1-go2w-preflight/assets/preflight-evidence.template.json
+          work="$(mktemp -d)"
+          python multi-agent-delivery/scripts/init_run.py \
+            --root "$work" \
+            --objective "CI dry-run of multi-agent-delivery"
+          python multi-agent-delivery/scripts/validate_run.py --root "$work"
+          python build-interactive-web-deck/scripts/scaffold_web_deck.py \
+            --output "$work/deck" \
+            --title "CI scaffold"
+          python build-interactive-web-deck/scripts/validate_web_deck.py "$work/deck"

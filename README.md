@@ -39,3 +39,5 @@
 - `references/`：各角色约束、工作流协议和验收规则。
 - `assets/`：运行时模板。
 - `scripts/`：初始化、校验等辅助脚本。
+
+<!-- superagent smoke test -->

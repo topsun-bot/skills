@@ -24,6 +24,7 @@
 
 | Skill | 作用 | 触发方式 |
 | --- | --- | --- |
+| [`conversation-retrospective`](conversation-retrospective/) | 基于对话证据，从问题定义、证据、推理、协作、反馈、行动与停止、元认知七个维度复盘，提炼可验证的改进；说明材料范围，不凑问题或改进条数。 | 询问“复盘这次讨论”“分析为什么反复返工”“回顾人机协作过程”，或直接使用 `$conversation-retrospective`。 |
 | [`zcode-subagent-viz`](zcode-subagent-viz/) | 从 `zai-org/ZCode` 抽离的子 Agent 与多智能体工作流可视化套件（含 `WorkflowTimeline` 水平多轨时间线、9 色微表情瓦片脸 `WorkflowAgentFace`、`WorkflowAgentPill` 胶囊、垂直脊线 `Spine` 与子会话只读下钻），支持作为 Antigravity Skill（Generative UI）与常驻 Sidecar 副屏插件运行。 | 询问子 Agent 可视化、多智能体轨迹图、打开 Subagent 副屏看板，或直接使用 `$zcode-subagent-viz` / `ai-agent-zcode-subagent-viz`。 |
 | [`multi-agent-delivery`](multi-agent-delivery/) | 让多个 Agent 按“需求取证 → 计划 → 独立审计划 → 开发 → 专项验证 → 原开发者修复 → 最终验收”的流程协作；普通修复到上限后先做独立根因裁决，仅对范围和权限不变的问题自动追加一次修复，避免无限复盘和无意义暂停。 | 仅在当前请求中直接使用 `$multi-agent-delivery`，或在界面中明确选择/附加该 Skill；不支持隐式触发。 |
 | [`build-interactive-web-deck`](build-interactive-web-deck/) | 把 PPT、文档、报告或研究材料编辑成手绘感互动网页演讲册，提供演讲与探索双模式、热点、分支、讲稿、证据和浏览器验收。 | 询问网页演讲册、可点击知识图册、Flipbook 风格演示，或直接使用 `$build-interactive-web-deck`。 |

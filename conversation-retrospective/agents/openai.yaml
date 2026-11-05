@@ -1,0 +1,3 @@
+interface:
+  display_name: "对话复盘"
+  short_description: "基于对话证据复盘问题定义、推理与协作，提炼可验证的改进动作"
